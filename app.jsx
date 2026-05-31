@@ -3,8 +3,9 @@ const { A, DIRS, clamp, dirFromVec } = window.TELLAK;
 
 const MAP_W = 2754;
 const MAP_H = 1536;
-const PLAYER_START_X = MAP_W * 0.76;
-const PLAYER_START_Y = MAP_H * 0.62;
+// Entrance door spawn (fixed)
+const PLAYER_START_X = Math.round(MAP_W * 0.40);
+const PLAYER_START_Y = Math.round(MAP_H * 0.50);
 const ZONE_GREEN = [126, 196, 0];
 const ZONE_PINK = [207, 18, 120];
 const ZONE_TOL = 70;
@@ -64,6 +65,10 @@ function App() {
   const [musicVol, setMusicVol] = useState(0.6);
   const [sfxVol, setSfxVol] = useState(0.9);
   const [gameStarted, setGameStarted] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [showPauseMenu, setShowPauseMenu] = useState(false);
+  const [resumingCount, setResumingCount] = useState(0);
+  const [gameOver, setGameOver] = useState(false);
   const musicVolRef = useRef(musicVol);
   const sfxVolRef = useRef(sfxVol);
 
@@ -86,6 +91,8 @@ function App() {
   const playerHPRef = useRef(PLAYER_MAX_HP);
   const [uiHP, setUiHP] = useState(PLAYER_MAX_HP);
   const killCountRef = useRef(0);
+  const totalDamageDealtRef = useRef(0);
+  const totalDamageTakenRef = useRef(0);
   const musicLockedOffRef = useRef(false);
   const [uiKills, setUiKills] = useState(0);
   const cooldownsRef = useRef({ punch: 0, kick: 0, slap: 0, drink: 0 });
@@ -388,18 +395,19 @@ function App() {
     // determine spawn coords: prefer provided coordinates, otherwise find a nearby allowed point
     function findSpawn(px, py) {
       if (typeof px === 'number' && typeof py === 'number' && canEnemySpawnAt(px, py)) return [px, py];
-      // try sampling around player start
-      for (let attempt = 0; attempt < 300; attempt++) {
-        const r = Math.random() * 600;
-        const a = Math.random() * Math.PI * 2;
-        const sx = Math.round(PLAYER_START_X + Math.cos(a) * r);
-        const sy = Math.round(PLAYER_START_Y + Math.sin(a) * r);
+      // try sampling random positions across the map, but keep a minimum distance from player
+      const MIN_SPAWN_DIST = 450;
+      for (let attempt = 0; attempt < 500; attempt++) {
+        const sx = Math.floor(Math.random() * MAP_W);
+        const sy = Math.floor(Math.random() * MAP_H);
+        if (Math.hypot(sx - PLAYER_START_X, sy - PLAYER_START_Y) < MIN_SPAWN_DIST) continue;
         if (sx >= 0 && sy >= 0 && sx < MAP_W && sy < MAP_H && canEnemySpawnAt(sx, sy)) return [sx, sy];
       }
       // fallback: random scan across the map
       for (let attempt = 0; attempt < 1000; attempt++) {
         const sx = Math.floor(Math.random() * MAP_W);
         const sy = Math.floor(Math.random() * MAP_H);
+        if (Math.hypot(sx - PLAYER_START_X, sy - PLAYER_START_Y) < 350) continue;
         if (canEnemySpawnAt(sx, sy)) return [sx, sy];
       }
       return [PLAYER_START_X, PLAYER_START_Y];
@@ -466,6 +474,7 @@ function App() {
     const critical = !!feedback.critical;
     const label = feedback.label || (critical ? 'critical hit!' : (amount >= 3 ? `hit! x${amount}` : amount >= 2 ? `hit! x${amount}` : 'hit!'));
     showEnemyHitText(enemy, label, critical);
+    totalDamageDealtRef.current += amount;
     enemy.hp -= amount;
     if (enemy.hp <= 0) {
       // death
@@ -481,6 +490,7 @@ function App() {
 
   function damagePlayer(amount) {
     showPlayerHitText('hit!');
+    totalDamageTakenRef.current += amount;
     playerHPRef.current = Math.max(0, playerHPRef.current - amount);
     setUiHP(playerHPRef.current);
     // play damage taken SFX
@@ -491,6 +501,10 @@ function App() {
       arena.current.dead = true;
       arena.current.keys.clear();
       arena.current.action = { key: 'death', start: performance.now(), dur: (A.death && A.death.dur) || 2, hold: true };
+      setPaused(true);
+      setShowPauseMenu(false);
+      setResumingCount(0);
+      setGameOver(true);
       // stop background and play end-of-game music
       try {
         stopBackgroundMusic();
@@ -503,6 +517,88 @@ function App() {
     playerHPRef.current = PLAYER_MAX_HP;
     setUiHP(playerHPRef.current);
   }
+
+  function restartGame() {
+    try {
+      // stop sounds
+      Object.values(sounds.current).forEach(s => { try { if (s && typeof s.pause === 'function') { s.pause(); s.currentTime = 0; } } catch (e) { } });
+
+      // remove enemies and their DOM
+      for (const e of enemiesRef.current.slice()) {
+        try { removeEnemy(e); } catch (err) { }
+      }
+      enemiesRef.current = [];
+
+      // reset counters and refs
+      enemyId.current = 1;
+      killCountRef.current = 0;
+      setUiKills(0);
+      totalDamageDealtRef.current = 0;
+      totalDamageTakenRef.current = 0;
+      cooldownsRef.current = {};
+      lastSpawnAt.current = performance.now();
+      musicLockedOffRef.current = false;
+
+      // reset player
+      playerHPRef.current = PLAYER_MAX_HP;
+      setUiHP(playerHPRef.current);
+
+      // reset arena state
+      arena.current.x = PLAYER_START_X;
+      arena.current.y = PLAYER_START_Y;
+      arena.current.facing = 'S';
+      arena.current.action = null;
+      arena.current.walkStart = performance.now();
+      arena.current.moving = false;
+      arena.current.dead = false;
+      try { arena.current.keys.clear(); } catch (e) { arena.current.keys = new Set(); }
+
+      // reset nav/path caches on enemies
+      // (they will recalc when needed)
+
+      // give a tick to UI
+      setTick(t => t + 1);
+
+      // ensure volumes are synced
+      syncAudioVolumes(musicVolRef.current, sfxVolRef.current);
+
+      // resume game loop
+      setPaused(false);
+      setGameOver(false);
+      setShowPauseMenu(false);
+      setResumingCount(0);
+      setGameStarted(true);
+    } catch (e) { console.warn('restartGame failed', e); }
+  }
+
+  function initiateResume() {
+    // hide pause menu but keep paused true until countdown finishes
+    setShowPauseMenu(false);
+    setResumingCount(3);
+  }
+
+  function cancelResumeCountdown() {
+    setResumingCount(0);
+    setShowPauseMenu(true);
+    setPaused(true);
+  }
+
+  // countdown effect for resuming
+  useEffect(() => {
+    if (!resumingCount || resumingCount <= 0) return;
+    const id = setInterval(() => {
+      setResumingCount(n => {
+        if (n <= 1) {
+          // finish countdown: unpause
+          setPaused(false);
+          clearInterval(id);
+          return 0;
+        }
+        return n - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [resumingCount]);
 
   function processActionHit(key) {
     const now = performance.now();
@@ -739,28 +835,43 @@ function App() {
   }
 
   // ---------- main rAF loop ----------
+  // initialize zone mask and sounds once on mount
+  useEffect(() => {
+    try {
+      updateWorldLayout();
+      loadZoneMask();
+    } catch (e) { }
+    try {
+      if (!sounds.current._inited) {
+        sounds.current.background = new Audio('sounds/background/background_sound.mp3');
+        sounds.current.background.loop = true;
+        sounds.current.background.volume = musicVolRef.current;
+        sounds.current.endOfGame = new Audio('sounds/endofgame/gameover.mp3');
+        sounds.current.enemyDeath = new Audio('sounds/enemydeath/enemykilled.mp3');
+        sounds.current.damageTaken = new Audio('sounds/damagetaken/damagetaken_soundeffect.mp3');
+        sounds.current.damageGiven = new Audio('sounds/damagegiven/damagegiven_soundeffect.mp3');
+        sounds.current.drinking = new Audio('sounds/drinkingayran/drinking_soundeffect.mp3');
+        // set initial volumes
+        if (sounds.current.background) sounds.current.background.volume = musicVolRef.current;
+        if (sounds.current.endOfGame) sounds.current.endOfGame.volume = musicVolRef.current;
+        sounds.current._inited = true;
+        try { window.__tellak_sounds = sounds.current; window.__tellak_musicLockedRef = musicLockedOffRef; } catch (e) { }
+      }
+    } catch (e) { console.warn('Audio init failed', e); }
+    // eslint-disable-next-line
+  }, []);
   useEffect(() => {
     let raf;
     const onResize = () => updateWorldLayout();
     updateWorldLayout();
-    loadZoneMask();
-    // preload sounds
-    try {
-      sounds.current.background = new Audio('sounds/background/background_sound.mp3');
-      sounds.current.background.loop = true;
-      sounds.current.background.volume = musicVolRef.current;
-      sounds.current.endOfGame = new Audio('sounds/endofgame/gameover.mp3');
-      sounds.current.enemyDeath = new Audio('sounds/enemydeath/enemykilled.mp3');
-      sounds.current.damageTaken = new Audio('sounds/damagetaken/damagetaken_soundeffect.mp3');
-      sounds.current.damageGiven = new Audio('sounds/damagegiven/damagegiven_soundeffect.mp3');
-      sounds.current.drinking = new Audio('sounds/drinkingayran/drinking_soundeffect.mp3');
-      // set initial volumes
-      if (sounds.current.background) sounds.current.background.volume = musicVolRef.current;
-      if (sounds.current.endOfGame) sounds.current.endOfGame.volume = musicVolRef.current;
-      try { window.__tellak_sounds = sounds.current; window.__tellak_musicLockedRef = musicLockedOffRef; } catch (e) { }
-    } catch (e) { console.warn('Audio init failed', e); }
-    if (gameStarted) {
+    if (gameStarted && !paused && !gameOver) {
       try { playBackgroundMusic(); } catch (e) { }
+    }
+    if (paused && !gameOver) {
+      try {
+        // pause background + any playing SFX
+        Object.values(sounds.current).forEach(s => { try { if (s && typeof s.pause === 'function') s.pause(); } catch (e) { } });
+      } catch (e) { }
     }
     if (arena.current.x === 0 && arena.current.y === 0) {
       arena.current.x = PLAYER_START_X;
@@ -770,7 +881,7 @@ function App() {
     let last = performance.now();
     function frame(now) {
       const dt = Math.min(0.05, (now - last) / 1000); last = now;
-      if (gameStarted) {
+      if (gameStarted && !paused && !gameOver) {
         const c = cfg.current;
         runArena(now, dt, c);
         if (musicLockedOffRef.current) stopBackgroundMusic();
@@ -786,7 +897,7 @@ function App() {
       window.removeEventListener('resize', onResize);
     };
     // eslint-disable-next-line
-  }, [gameStarted]);
+  }, [gameStarted, paused, resumingCount]);
 
   useEffect(() => {
     syncAudioVolumes(musicVol, sfxVol);
@@ -982,6 +1093,27 @@ function App() {
       if (!gameStarted) return;
       if (a.dead) return;
       const key = e.key.toLowerCase();
+      // allow toggling pause with 'p' even when paused
+      if (key === 'p') {
+        if (resumingCount > 0) {
+          cancelResumeCountdown();
+          return;
+        }
+        setPaused(prev => {
+          const next = !prev;
+          if (next) {
+            // pausing: clear inputs and stop movement, show menu
+            try { arena.current.keys.clear(); } catch (err) { }
+            setShowPauseMenu(true);
+          } else {
+            // initiate resume countdown
+            initiateResume();
+          }
+          return next;
+        });
+        return;
+      }
+      if (paused) return;
       if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
         e.preventDefault();
         // moving releases a held action (revive / stand up)
@@ -1011,7 +1143,7 @@ function App() {
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); a.keys.clear(); a.action = null; };
-  }, [gameStarted]);
+  }, [gameStarted, paused]);
 
   const nowPerf = performance.now();
   const remSec = (k) => Math.max(0, Math.ceil(((cooldownsRef.current[k] || 0) - nowPerf) / 1000));
@@ -1082,12 +1214,62 @@ function App() {
                 </div>
               </div>
             </div>
+            <div className="row" style={{ marginTop: 6, justifyContent: 'flex-start' }}>
+              <button
+                className="hudPauseButton"
+                onClick={() => {
+                  if (resumingCount > 0) {
+                    cancelResumeCountdown();
+                    return;
+                  }
+                  setPaused(prev => {
+                    const next = !prev;
+                    if (next) {
+                      try { arena.current.keys.clear(); } catch (e) { }
+                      setShowPauseMenu(true);
+                    } else {
+                      initiateResume();
+                    }
+                    return next;
+                  });
+                }}
+              >
+                Pause
+              </button>
+            </div>
+            {resumingCount > 0 && (
+              <div style={{ textAlign: 'left', marginTop: 6, fontSize: 13, opacity: 0.95 }}>
+                Resuming..{resumingCount}
+              </div>
+            )}
           </div>
-          {!gameStarted && (
+          {gameStarted && gameOver && (
             <div className="mainMenu">
               <div className="menuCard">
-                <div className="menuKicker">TELLAK - HAMAM BRAWLER</div>
-                <h1>Main Menu</h1>
+                <h1>GAME OVER</h1>
+                <div className="menuDesc">Your run has ended.</div>
+                <div className="menuStats" style={{ margin: '18px 0 20px', textAlign: 'center', fontSize: 14, lineHeight: 1.7 }}>
+                  <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 10 }}>Kills: {uiKills}</div>
+                  <div><strong>Total Damage Dealt:</strong> {totalDamageDealtRef.current}</div>
+                  <div><strong>Total Damage Taken:</strong> {totalDamageTakenRef.current}</div>
+                </div>
+                <button
+                  className="startButton restartButton"
+                  onPointerDown={e => e.stopPropagation()}
+                  onClick={e => {
+                    e.stopPropagation();
+                    restartGame();
+                  }}
+                >
+                  Restart
+                </button>
+              </div>
+            </div>
+          )}
+          {gameStarted && !gameOver && paused && showPauseMenu && (
+            <div className="mainMenu">
+              <div className="menuCard">
+                <h1>Game Paused</h1>
                 <div className="menuControls">
                   <div className="menuRow">
                     <span>Music</span>
@@ -1104,6 +1286,54 @@ function App() {
                   <div><strong>K</strong> - Kick</div>
                   <div><strong>L</strong> - Ottoman Slap</div>
                   <div><strong>B</strong> - Drink Sodalı Ayran</div>
+                  <div><strong>P</strong> - Pause</div>
+                </div>
+                <div className="menuDesc">Game paused. Resume to continue your run.</div>
+                <button
+                  className="startButton"
+                  onPointerDown={e => e.stopPropagation()}
+                  onClick={e => {
+                    e.stopPropagation();
+                    // start the resume countdown
+                    initiateResume();
+                  }}
+                >
+                  Resume
+                </button>
+                <button
+                  className="startButton restartButton"
+                  onPointerDown={e => e.stopPropagation()}
+                  onClick={e => {
+                    e.stopPropagation();
+                    restartGame();
+                  }}
+                >
+                  Restart
+                </button>
+              </div>
+            </div>
+          )}
+          {!gameStarted && (
+            <div className="mainMenu">
+              <div className="menuCard">
+                <h1>TELLAK<br />Hamam Brawler</h1>
+                <div className="menuControls">
+                  <div className="menuRow">
+                    <span>Music</span>
+                    <input type="range" min="0" max="1" step="0.01" value={musicVol} onInput={e => { const v = parseFloat(e.target.value); setMusicVol(v); syncAudioVolumes(v, sfxVolRef.current); }} onChange={e => { const v = parseFloat(e.target.value); setMusicVol(v); syncAudioVolumes(v, sfxVolRef.current); }} />
+                  </div>
+                  <div className="menuRow">
+                    <span>SFX</span>
+                    <input type="range" min="0" max="1" step="0.01" value={sfxVol} onInput={e => { const v = parseFloat(e.target.value); setSfxVol(v); syncAudioVolumes(musicVolRef.current, v); }} onChange={e => { const v = parseFloat(e.target.value); setSfxVol(v); syncAudioVolumes(musicVolRef.current, v); }} />
+                  </div>
+                </div>
+                <div className="menuHelp">
+                  <div><strong>WASD</strong> - Move</div>
+                  <div><strong>J</strong> - Punch</div>
+                  <div><strong>K</strong> - Kick</div>
+                  <div><strong>L</strong> - Ottoman Slap</div>
+                  <div><strong>B</strong> - Drink Sodalı Ayran</div>
+                  <div><strong>P</strong> - Pause</div>
                 </div>
                 <div className="menuDesc">Punch deals 1 damage with a 1s cooldown. Kick deals 2 damage with a 2s cooldown. Ottoman Slap deals 3 damage with a 10s cooldown, hits all enemies in range, and has a 25% chance to instantly kill. Drinking Sodalı Ayran fully restores HP and has a 30s cooldown.</div>
                 <button
@@ -1112,6 +1342,7 @@ function App() {
                   onClick={e => {
                     e.stopPropagation();
                     setGameStarted(true);
+                    setPaused(false);
                   }}
                 >
                   Start Game

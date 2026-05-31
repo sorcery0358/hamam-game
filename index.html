@@ -102,7 +102,7 @@
 
     .menuCard h1 {
       margin: 0;
-      font-size: clamp(36px, 6vw, 62px);
+      font-size: clamp(28px, 5vw, 44px);
       line-height: 0.95;
       letter-spacing: 0.02em;
       color: #f5f2df;
@@ -176,6 +176,55 @@
     }
 
     .startButton:active {
+      transform: translateY(1px);
+    }
+
+    .restartButton {
+      margin-top: 12px;
+      /* slightly brighter, higher-contrast gray gradient for a livelier look */
+      background: linear-gradient(180deg, #d0d0d0 0%, #9b9b9b 100%);
+      color: #0b0b0b;
+      border: 1px solid rgba(0, 0, 0, 0.22);
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
+    }
+
+    .restartButton:hover {
+      filter: brightness(1.08);
+      box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+    }
+
+    .restartButton:active {
+      transform: translateY(1px) scale(0.997);
+    }
+
+    .hudPauseButton {
+      appearance: none;
+      border: 0;
+      padding: 4px 8px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.6);
+      color: var(--ink);
+      font-weight: 700;
+      margin-right: 12px;
+      margin-left: -10px;
+      /* nudge left by ~10px */
+      /* match HUD font and sizing */
+      font-family: inherit;
+      font-size: 14px;
+      line-height: 1.4;
+      display: inline-flex;
+      align-items: center;
+      cursor: pointer;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      transition: filter 120ms ease, transform 80ms ease;
+    }
+
+    .hudPauseButton:hover {
+      filter: brightness(1.05);
+    }
+
+    .hudPauseButton:active {
       transform: translateY(1px);
     }
 
@@ -341,11 +390,7 @@
     }
 
     .dust {
-      position: absolute;
-      left: 0;
-      top: 0;
-      transform: translate(-50%, -50%);
-      opacity: 0;
+      display: none !important;
     }
 
     .dust b {
