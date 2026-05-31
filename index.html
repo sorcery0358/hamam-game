@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tellak — Hamam Brawler · Animation Lab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <style>
+    :root {
+      --bg: #0d1513;
+      --bg2: #0a100f;
+      --ink: #ece6d6;
+      --brass: #d9a441;
+      --brass-d: #a87c2b;
+      --char-h: 248px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+    }
+
+    body {
+      background:
+        radial-gradient(120% 80% at 50% -10%, #16302b 0%, var(--bg) 55%, var(--bg2) 100%);
+      color: var(--ink);
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
+
+    #root {
+      height: 100vh;
+    }
+
+    .stagewrap {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+      display: flex;
+      align-items: stretch;
+      justify-content: stretch;
+      min-width: 0;
+    }
+
+    /* ---------- the stage ---------- */
+    .stage {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      border-radius: 0;
+      overflow: hidden;
+      border: 0;
+      box-shadow: none;
+    }
+
+    /* hamam marble arena */
+    .stage.arena {
+      background: #cdd6d2;
+      background-image:
+        radial-gradient(circle at 50% 50%, rgba(0, 0, 0, .04) 0 2px, transparent 3px),
+        repeating-linear-gradient(45deg, rgba(67, 163, 156, .10) 0 2px, transparent 2px 26px),
+        repeating-linear-gradient(-45deg, rgba(67, 163, 156, .10) 0 2px, transparent 2px 26px),
+        linear-gradient(180deg, #d8e0dc, #bcc8c2);
+      background-size: auto, 36px 36px, 36px 36px, auto;
+    }
+
+    .stage.arena::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(80% 90% at 50% 40%, transparent 40%, rgba(8, 20, 18, .45) 100%);
+      pointer-events: none;
+    }
+
+    .world {
+      position: absolute;
+      inset: 0;
+    }
+
+    .shadow {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 150px;
+      height: 30px;
+      margin-left: -75px;
+      margin-top: -15px;
+      border-radius: 50%;
+      background: radial-gradient(closest-side, rgba(0, 0, 0, .45), transparent);
+      will-change: transform, opacity;
+    }
+
+    .charAnchor {
+      position: absolute;
+      left: 0;
+      top: 0;
+      will-change: transform;
+    }
+
+    .charScale {
+      position: relative;
+      will-change: transform;
+      transform-origin: 50% 100%;
+    }
+
+    .charScale img {
+      display: block;
+      height: var(--char-h);
+      width: auto;
+      filter: drop-shadow(0 2px 0 rgba(0, 0, 0, .25));
+    }
+
+    .charScale img.hide {
+      display: none;
+    }
+
+    .hitFlash {
+      position: absolute;
+      inset: 0;
+      mix-blend-mode: screen;
+      opacity: 0;
+      background: radial-gradient(circle at 50% 45%, #fff, transparent 60%);
+      pointer-events: none;
+    }
+
+    /* ---------- FX ---------- */
+    .fxLayer {
+      position: absolute;
+      left: 0;
+      top: 0;
+      pointer-events: none;
+    }
+
+    .spark {
+      position: absolute;
+      left: 0;
+      top: 0;
+      transform: translate(-50%, -50%);
+      opacity: 0;
+    }
+
+    .spark .star {
+      width: 74px;
+      height: 74px;
+      background: #ffe9a8;
+      clip-path: polygon(50% 0, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+      filter: drop-shadow(0 0 6px #ffd36a);
+    }
+
+    .spark .core {
+      position: absolute;
+      inset: 22%;
+      background: #fff;
+      border-radius: 50%;
+    }
+
+    .streak {
+      position: absolute;
+      left: 0;
+      top: 0;
+      opacity: 0;
+    }
+
+    .streak i {
+      position: absolute;
+      height: 5px;
+      border-radius: 3px;
+      background: linear-gradient(90deg, transparent, #fff);
+      transform-origin: 0 50%;
+    }
+
+    .dust {
+      position: absolute;
+      left: 0;
+      top: 0;
+      transform: translate(-50%, -50%);
+      opacity: 0;
+    }
+
+    .dust b {
+      position: absolute;
+      border-radius: 50%;
+      background: rgba(220, 225, 210, .85);
+    }
+
+    .kostars {
+      position: absolute;
+      left: 0;
+      top: 0;
+      transform: translate(-50%, -50%);
+      opacity: 0;
+    }
+
+    .kostars i {
+      position: absolute;
+      font-size: 20px;
+      color: var(--brass);
+    }
+
+    .slaparc {
+      position: absolute;
+      left: 0;
+      top: 0;
+      opacity: 0;
+      transform: translate(-50%, -50%);
+    }
+
+    .slaparc .arc {
+      width: 160px;
+      height: 160px;
+      border: 9px solid #fff;
+      border-radius: 50%;
+      clip-path: polygon(50% 50%, 100% 0, 100% 100%);
+      filter: drop-shadow(0 0 8px #fff);
+    }
+
+    .burst {
+      position: absolute;
+      left: 0;
+      top: 0;
+      transform: translate(-50%, -50%);
+      opacity: 0;
+    }
+
+    .burst .ring {
+      position: absolute;
+      inset: 0;
+      border: 6px solid #ffe9a8;
+      border-radius: 50%;
+    }
+
+    .glass {
+      position: absolute;
+      left: 0;
+      top: 0;
+      opacity: 0;
+      will-change: transform;
+      transform-origin: 50% 100%;
+    }
+
+    .glass .cup {
+      position: relative;
+      width: 30px;
+      height: 42px;
+      border: 3px solid #dfe7e4;
+      border-top: none;
+      border-radius: 3px 3px 6px 6px;
+      background: rgba(255, 255, 255, .12);
+      overflow: hidden;
+    }
+
+    .glass .liquid {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(#fff, #eef3f0);
+    }
+
+    .foam {
+      position: absolute;
+      left: 0;
+      top: 0;
+      transform: translate(-50%, -50%);
+      opacity: 0;
+      width: 22px;
+      height: 9px;
+      background: #fff;
+      border-radius: 6px;
+      box-shadow: -9px 1px 0 -2px #fff, 9px 1px 0 -2px #fff;
+    }
+
+    .sweat {
+      position: absolute;
+      left: 0;
+      top: 0;
+      opacity: 0;
+      width: 10px;
+      height: 13px;
+      background: #bfe6ff;
+      border-radius: 55% 55% 50% 50% / 70% 70% 40% 40%;
+      box-shadow: 0 0 5px rgba(180, 220, 255, .7), inset -2px -2px 0 rgba(120, 180, 220, .5);
+    }
+  </style>
+</head>
+
+<body>
+  <div id="root"></div>
+
+  <!-- preload sprites so first frame is instant -->
+  <img src="sprites/tellak_front.png" style="display:none" alt="" id="pre-front" />
+  <img src="sprites/tellak_back.png" style="display:none" alt="" id="pre-back" />
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"
+    integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L"
+    crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"
+    integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm"
+    crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"
+    integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y"
+    crossorigin="anonymous"></script>
+  <script src="anim.js"></script>
+  <script type="text/babel" src="app.jsx"></script>
+</body>
+
+</html>
