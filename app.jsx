@@ -946,11 +946,13 @@ function App() {
 
   // detect touch-capable device to show mobile controls
   useEffect(() => {
-    // TEMPORARY: force mobile controls visible for testing on desktop
-    setShowMobileControls(true);
-    // original detection (commented out):
-    // const touchy = (typeof window !== 'undefined') && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
-    // setShowMobileControls(!!touchy);
+    // enable mobile controls only on touch-capable devices
+    try {
+      const touchy = (typeof window !== 'undefined') && ('ontouchstart' in window || (navigator && navigator.maxTouchPoints > 0));
+      setShowMobileControls(!!touchy);
+    } catch (e) {
+      setShowMobileControls(false);
+    }
   }, []);
   useEffect(() => {
     let raf;
