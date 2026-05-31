@@ -73,6 +73,7 @@ function App() {
   useEffect(() => { resumingCountRef.current = resumingCount; }, [resumingCount]);
   const musicVolRef = useRef(musicVol);
   const sfxVolRef = useRef(sfxVol);
+  const lastPauseToggleRef = useRef(0);
 
   const stageRef = useRef(null);
   const worldRef = useRef(null);
@@ -86,6 +87,74 @@ function App() {
     layer: useRef(), spark: useRef(), streak: useRef(), dust: useRef(), stars: useRef(),
     glass: useRef(), liquid: useRef(), foam: useRef(), sweat: useRef(), slap: useRef(), burst: useRef(),
   };
+  // mobile controls refs/state
+  const [showMobileControls, setShowMobileControls] = useState(false);
+  const joystickRef = useRef(null);
+  const joystickKnobRef = useRef(null);
+  const joystickPointerId = useRef(null);
+  const joystickCenter = useRef({ x: 0, y: 0 });
+  const joystickDeadzone = 0.2;
+  const joystickActiveRef = useRef(false);
+
+  function updateJoystickFromPoint(clientX, clientY) {
+    const jc = joystickCenter.current;
+    const dx = clientX - jc.x;
+    const dy = clientY - jc.y;
+    const r = Math.max(48, 64); // nominal joystick radius in px
+    const nx = Math.max(-1, Math.min(1, dx / r));
+    const ny = Math.max(-1, Math.min(1, dy / r));
+    // map to arena keys (ny: -1 up, +1 down)
+    try { arena.current.keys.clear(); } catch (e) { arena.current.keys = new Set(); }
+    if (nx < -joystickDeadzone) arena.current.keys.add('a');
+    else if (nx > joystickDeadzone) arena.current.keys.add('d');
+    if (ny < -joystickDeadzone) arena.current.keys.add('w');
+    else if (ny > joystickDeadzone) arena.current.keys.add('s');
+    // visual knob movement
+    try {
+      if (joystickKnobRef.current) {
+        const kx = Math.max(-r, Math.min(r, dx));
+        const ky = Math.max(-r, Math.min(r, dy));
+        joystickKnobRef.current.style.transform = `translate(${kx}px, ${ky}px)`;
+      }
+    } catch (e) { }
+  }
+
+  function onJoystickPointerDown(e) {
+    if (!joystickRef.current) return;
+    joystickPointerId.current = e.pointerId;
+    try { joystickRef.current.setPointerCapture(e.pointerId); } catch (ex) { }
+    const rect = joystickRef.current.getBoundingClientRect();
+    joystickCenter.current = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    joystickActiveRef.current = true;
+    updateJoystickFromPoint(e.clientX, e.clientY);
+    e.preventDefault(); e.stopPropagation();
+  }
+
+  function onJoystickPointerMove(e) {
+    if (!joystickActiveRef.current) return;
+    if (joystickPointerId.current != null && e.pointerId !== joystickPointerId.current) return;
+    updateJoystickFromPoint(e.clientX, e.clientY);
+    e.preventDefault(); e.stopPropagation();
+  }
+
+  function onJoystickPointerUp(e) {
+    if (joystickPointerId.current != null && e.pointerId !== joystickPointerId.current) return;
+    joystickPointerId.current = null;
+    joystickActiveRef.current = false;
+    try { arena.current.keys.clear(); } catch (ex) { arena.current.keys = new Set(); }
+    try { if (joystickKnobRef.current) joystickKnobRef.current.style.transform = `translate(0px, 0px)`; } catch (ex) { }
+    try { if (joystickRef.current) joystickRef.current.releasePointerCapture && joystickRef.current.releasePointerCapture(e.pointerId); } catch (ex) { }
+    e.preventDefault(); e.stopPropagation();
+  }
+
+  function mobileAction(actionKey) {
+    if (!isOffCooldown(actionKey)) return;
+    if (actionKey === 'drink') {
+      const a = arena.current;
+      if (!a || !canDrinkAt(a.x, a.y)) return;
+    }
+    startAction(actionKey, false);
+  }
   const sounds = useRef({});
   const zoneMask = useRef({ ready: false, w: MAP_W, h: MAP_H, cells: null });
   const navGrid = useRef({ ready: false, w: 0, h: 0, cellSize: NAV_CELL_SIZE, cells: null });
@@ -479,12 +548,19 @@ function App() {
     totalDamageDealtRef.current += amount;
     enemy.hp -= amount;
     if (enemy.hp <= 0) {
-      // death
-      removeEnemy(enemy);
-      killCountRef.current += 1;
-      setUiKills(killCountRef.current);
-      // play enemy death SFX
+      // already dying
+      if (enemy.action && enemy.action.key === 'death') return true;
+      // death: trigger enemy death action so animation plays, then remove
       try { if (sounds.current.enemyDeath) { sounds.current.enemyDeath.volume = sfxVolRef.current; sounds.current.enemyDeath.currentTime = 0; sounds.current.enemyDeath.play(); } } catch (e) { }
+      const deathDur = (A.death && A.death.dur) || 1.5;
+      enemy.hp = 0;
+      enemy.action = { key: 'death', start: performance.now(), dur: deathDur, hold: true };
+      // schedule DOM removal after animation finishes
+      setTimeout(() => {
+        try { removeEnemy(enemy); } catch (e) { }
+        killCountRef.current += 1;
+        setUiKills(killCountRef.current);
+      }, Math.max(0, deathDur * 1000));
       return true;
     }
     return false;
@@ -501,17 +577,22 @@ function App() {
       // death: trigger death action
       musicLockedOffRef.current = true;
       arena.current.dead = true;
-      arena.current.keys.clear();
-      arena.current.action = { key: 'death', start: performance.now(), dur: (A.death && A.death.dur) || 2, hold: true };
-      setPaused(true);
+      try { arena.current.keys.clear(); } catch (e) { arena.current.keys = new Set(); }
+      // start death action and let the game loop run so the death animation can play
+      const deathDur = (A.death && A.death.dur) || 2;
+      arena.current.action = { key: 'death', start: performance.now(), dur: deathDur, hold: true };
+      // hide pause UI and any resume countdown, but DO NOT set gameOver or paused yet;
+      // allow runArena to continue so the death animation is applied.
       setShowPauseMenu(false);
       setResumingCount(0);
-      setGameOver(true);
-      // stop background and play end-of-game music
-      try {
-        stopBackgroundMusic();
-        if (sounds.current.endOfGame) { sounds.current.endOfGame.volume = musicVolRef.current; sounds.current.endOfGame.currentTime = 0; sounds.current.endOfGame.play(); }
-      } catch (e) { }
+      // after the death animation finishes, mark game over and stop music / play end music
+      setTimeout(() => {
+        try { stopBackgroundMusic(); } catch (e) { }
+        try { if (sounds.current.endOfGame) { sounds.current.endOfGame.volume = musicVolRef.current; sounds.current.endOfGame.currentTime = 0; sounds.current.endOfGame.play(); } } catch (e) { }
+        // freeze the game loop by pausing and show Game Over
+        setPaused(true);
+        setGameOver(true);
+      }, Math.max(0, deathDur * 1000));
     }
   }
 
@@ -862,6 +943,15 @@ function App() {
     } catch (e) { console.warn('Audio init failed', e); }
     // eslint-disable-next-line
   }, []);
+
+  // detect touch-capable device to show mobile controls
+  useEffect(() => {
+    // TEMPORARY: force mobile controls visible for testing on desktop
+    setShowMobileControls(true);
+    // original detection (commented out):
+    // const touchy = (typeof window !== 'undefined') && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+    // setShowMobileControls(!!touchy);
+  }, []);
   useEffect(() => {
     let raf;
     const onResize = () => updateWorldLayout();
@@ -969,7 +1059,10 @@ function App() {
     // ----- enemy AI + spawn -----
     const enemies = enemiesRef.current;
     for (const en of enemies.slice()) {
-      if (!en || en.hp <= 0) continue;
+      if (!en) continue;
+      // allow enemies with a death action to continue processing so their
+      // death animation can play; otherwise skip dead ones
+      if (en.hp <= 0 && !(en.action && en.action.key === 'death')) continue;
       const dx = arena.current.x - en.x;
       const dy = arena.current.y - en.y;
       const dist = Math.hypot(dx, dy);
@@ -1070,6 +1163,15 @@ function App() {
       }
     }
 
+    // layering: ensure characters render in front/back order by Y (lower y -> on top)
+    try {
+      const pz = Math.round(a.y || 0);
+      if (anchorRef.current) anchorRef.current.style.zIndex = pz;
+      for (const en of enemies) {
+        if (en && en.el) en.el.style.zIndex = Math.round(en.y || 0);
+      }
+    } catch (e) { }
+
     // spawn control: increase max enemies with kills
     const target = 1 + Math.floor(killCountRef.current / 3);
     if (enemies.length < target && performance.now() - lastSpawnAt.current > 1500) {
@@ -1087,7 +1189,62 @@ function App() {
     npRef.current = key;
   }
 
+  // Menu focus/navigation (for gamepad)
+  const [activeMenu, setActiveMenu] = useState(null); // 'start' | 'pause' | 'gameover' | null
+  const [menuFocusIndex, setMenuFocusIndex] = useState(0);
+  const menuFocusIndexRef = useRef(menuFocusIndex);
+  const activeMenuRef = useRef(null);
+  useEffect(() => { activeMenuRef.current = activeMenu; }, [activeMenu]);
+  useEffect(() => { menuFocusIndexRef.current = menuFocusIndex; }, [menuFocusIndex]);
+  const startBtnRef = useRef(null);
+  const pauseResumeRef = useRef(null);
+  const pauseRestartRef = useRef(null);
+  const gameOverRestartRef = useRef(null);
+  const startMusicRef = useRef(null);
+  const startSfxRef = useRef(null);
+  const pauseMusicRef = useRef(null);
+  const pauseSfxRef = useRef(null);
+
+
+  useEffect(() => {
+    if (!gameStarted) setActiveMenu('start');
+    else if (gameOver) setActiveMenu('gameover');
+    else if (paused && showPauseMenu) setActiveMenu('pause');
+    else setActiveMenu(null);
+    setMenuFocusIndex(0);
+    menuFocusIndexRef.current = 0;
+  }, [gameStarted, gameOver, paused, showPauseMenu]);
+
+  // Focus the appropriate button using browser default focus handling
+  useEffect(() => {
+    if (!activeMenu) return;
+    if (activeMenu === 'start') {
+      // focus first control in start menu: music slider then sfx then start
+      if (menuFocusIndex === 0 && startMusicRef.current && typeof startMusicRef.current.focus === 'function') startMusicRef.current.focus();
+      if (menuFocusIndex === 1 && startSfxRef.current && typeof startSfxRef.current.focus === 'function') startSfxRef.current.focus();
+      if (menuFocusIndex === 2 && startBtnRef.current && typeof startBtnRef.current.focus === 'function') startBtnRef.current.focus();
+    } else if (activeMenu === 'pause') {
+      // focus order in pause: music, sfx, resume, restart
+      if (menuFocusIndex === 0 && pauseMusicRef.current && typeof pauseMusicRef.current.focus === 'function') pauseMusicRef.current.focus();
+      if (menuFocusIndex === 1 && pauseSfxRef.current && typeof pauseSfxRef.current.focus === 'function') pauseSfxRef.current.focus();
+      if (menuFocusIndex === 2 && pauseResumeRef.current && typeof pauseResumeRef.current.focus === 'function') pauseResumeRef.current.focus();
+      if (menuFocusIndex === 3 && pauseRestartRef.current && typeof pauseRestartRef.current.focus === 'function') pauseRestartRef.current.focus();
+    } else if (activeMenu === 'gameover') {
+      if (gameOverRestartRef.current && typeof gameOverRestartRef.current.focus === 'function') gameOverRestartRef.current.focus();
+    }
+  }, [activeMenu, menuFocusIndex]);
+
+  // start an action on the player (used by keyboard and gamepad)
+  function startAction(name, hold = false) {
+    try { arena.current.keys.clear(); } catch (e) { arena.current.keys = new Set(); }
+    arena.current.action = { key: name, start: performance.now(), dur: (A[name] && A[name].dur) || 1, hold, hitApplied: false };
+  }
+
   function handlePauseRequest() {
+    const now = performance.now();
+    // ignore rapid toggles (debounce Start/Select bounces)
+    if (now - (lastPauseToggleRef.current || 0) < 220) return;
+    lastPauseToggleRef.current = now;
     if (resumingCountRef.current > 0) {
       // cancel countdown and ensure pause menu is visible
       cancelResumeCountdown();
@@ -1156,6 +1313,201 @@ function App() {
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); a.keys.clear(); a.action = null; };
   }, [gameStarted, paused]);
 
+  // ---------- gamepad support ----------
+  useEffect(() => {
+    let rafId = 0;
+    let prevButtons = [];
+    let prevDpad = { up: false, down: false, left: false, right: false };
+    const deadzone = 0.25;
+    const volRate = 0.6; // volume change per second when held
+
+    function poll(now) {
+      const gps = navigator.getGamepads ? navigator.getGamepads() : [];
+      const gp = gps[0];
+      if (gp) {
+        // axes: 0 = LS X (-1 left, +1 right), 1 = LS Y (-1 up, +1 down)
+        const ax = gp.axes[0] || 0;
+        const ay = gp.axes[1] || 0;
+        // handle UI navigation when a menu is active
+        const menuActive = activeMenuRef.current;
+        // D-pad booleans (consider analog stick as well)
+        const upBtn = !!(gp.buttons[12] && gp.buttons[12].pressed) || (ay < -deadzone);
+        const downBtn = !!(gp.buttons[13] && gp.buttons[13].pressed) || (ay > deadzone);
+        const leftBtn = !!(gp.buttons[14] && gp.buttons[14].pressed) || (ax < -deadzone);
+        const rightBtn = !!(gp.buttons[15] && gp.buttons[15].pressed) || (ax > deadzone);
+
+        if (menuActive) {
+          // navigate menu focus on edge press
+          const upEdge = upBtn && !prevDpad.up;
+          const downEdge = downBtn && !prevDpad.down;
+          const leftEdge = leftBtn && !prevDpad.left;
+          const rightEdge = rightBtn && !prevDpad.right;
+          prevDpad = { up: upBtn, down: downBtn, left: leftBtn, right: rightBtn };
+          // menu lengths: start -> music,sfx,start (3); pause -> music,sfx,resume,restart (4); gameover -> restart (1)
+          const len = menuActive === 'pause' ? 4 : (menuActive === 'start' ? 3 : 1);
+          // Navigate focus only with up/down edges (including D-pad up/down and stick Y); ignore left/right for focus
+          if (upEdge) {
+            const cur = (typeof menuFocusIndexRef.current === 'number') ? menuFocusIndexRef.current : 0;
+            const next = (cur - 1 + len) % len;
+            setMenuFocusIndex(next);
+            menuFocusIndexRef.current = next;
+          }
+          if (downEdge) {
+            const cur = (typeof menuFocusIndexRef.current === 'number') ? menuFocusIndexRef.current : 0;
+            const next = (cur + 1) % len;
+            setMenuFocusIndex(next);
+            menuFocusIndexRef.current = next;
+          }
+          // if focused element is a slider, allow continuous left/right or stick X to adjust value
+          const focusedIdx = (typeof menuFocusIndexRef.current === 'number') ? menuFocusIndexRef.current : 0;
+          const focusedIsStartMusic = menuActive === 'start' && focusedIdx === 0;
+          const focusedIsStartSfx = menuActive === 'start' && focusedIdx === 1;
+          const focusedIsPauseMusic = menuActive === 'pause' && focusedIdx === 0;
+          const focusedIsPauseSfx = menuActive === 'pause' && focusedIdx === 1;
+          // adjust slider by volRate per second; use frame approx 1/60s
+          const frameDelta = 1 / 60;
+          if (focusedIsStartMusic || focusedIsPauseMusic) {
+            // right increases, left decreases; also map stick X
+            const delta = (rightBtn ? 1 : 0) - (leftBtn ? 1 : 0);
+            let change = 0;
+            if (Math.abs(ax) > deadzone) {
+              const stick = Math.max(-1, Math.min(1, ax));
+              const adj = Math.abs(stick) > deadzone ? stick : 0;
+              change = (delta || adj) * volRate * frameDelta;
+            } else if (delta !== 0) {
+              change = delta * volRate * frameDelta;
+            }
+            if (change !== 0) {
+              const next = Math.max(0, Math.min(1, (musicVolRef.current || 0) + change));
+              setMusicVol(next);
+              syncAudioVolumes(next, sfxVolRef.current);
+            }
+          }
+          if (focusedIsStartSfx || focusedIsPauseSfx) {
+            const delta = (rightBtn ? 1 : 0) - (leftBtn ? 1 : 0);
+            let change = 0;
+            if (Math.abs(ax) > deadzone) {
+              const stick = Math.max(-1, Math.min(1, ax));
+              const adj = Math.abs(stick) > deadzone ? stick : 0;
+              change = (delta || adj) * volRate * frameDelta;
+            } else if (delta !== 0) {
+              change = delta * volRate * frameDelta;
+            }
+            if (change !== 0) {
+              const next = Math.max(0, Math.min(1, (sfxVolRef.current || 0) + change));
+              setSfxVol(next);
+              syncAudioVolumes(musicVolRef.current, next);
+            }
+          }
+        } else {
+          // map to WASD for gameplay when no menu active
+          try { arena.current.keys.clear(); } catch (e) { arena.current.keys = new Set(); }
+          if (Math.abs(ax) > deadzone) {
+            if (ax < -deadzone) arena.current.keys.add('a');
+            else if (ax > deadzone) arena.current.keys.add('d');
+          }
+          if (Math.abs(ay) > deadzone) {
+            if (ay < -deadzone) arena.current.keys.add('w');
+            else if (ay > deadzone) arena.current.keys.add('s');
+          }
+          // D-pad also maps to movement when no menu active
+          if (gp.buttons[12] && gp.buttons[12].pressed) arena.current.keys.add('w');
+          if (gp.buttons[13] && gp.buttons[13].pressed) arena.current.keys.add('s');
+          if (gp.buttons[14] && gp.buttons[14].pressed) arena.current.keys.add('a');
+          if (gp.buttons[15] && gp.buttons[15].pressed) arena.current.keys.add('d');
+        }
+
+        // button mapping (standard gamepad)
+        // 0=A,1=B,2=X,3=Y,4=LB,5=RB,6=LT,7=RT,8=Back,9=Start
+        const buttons = gp.buttons.map(b => (b ? (b.pressed ? 1 : 0) : 0));
+
+        // detect button down events
+        for (let i = 0; i < buttons.length; i++) {
+          const prev = prevButtons[i] || 0;
+          const cur = buttons[i];
+          if (!prev && cur) {
+            // button down
+            // if a menu is active, map A/B to confirm/back
+            const menuActiveNow = activeMenuRef.current;
+            if (menuActiveNow) {
+              if (i === 0) { // A = confirm
+                const idx = (typeof menuFocusIndexRef.current === 'number') ? menuFocusIndexRef.current : 0;
+                // perform action based on focused control (buttons) — sliders are adjusted by stick/dpad so A acts only on buttons
+                if (menuActiveNow === 'start') {
+                  if (idx === 2 && startBtnRef.current) startBtnRef.current.click();
+                } else if (menuActiveNow === 'pause') {
+                  if (idx === 2 && pauseResumeRef.current) pauseResumeRef.current.click();
+                  if (idx === 3 && pauseRestartRef.current) pauseRestartRef.current.click();
+                } else if (menuActiveNow === 'gameover') {
+                  if (gameOverRestartRef.current) gameOverRestartRef.current.click();
+                }
+                // consume this event
+                continue;
+              } else if (i === 1) { // B = back / act as Resume in menus
+                if (menuActiveNow === 'pause') {
+                  // behave exactly like Resume: start the resume countdown
+                  if (typeof initiateResume === 'function') initiateResume();
+                }
+                continue;
+              }
+            }
+            switch (i) {
+              case 0: // A -> punch (j)
+                if (!paused && isOffCooldown('punch')) startAction('punch', false);
+                break;
+              case 2: // X -> kick (k)
+                if (!paused && isOffCooldown('kick')) startAction('kick', false);
+                break;
+              case 3: // Y -> slap (l)
+                if (!paused && isOffCooldown('slap')) startAction('slap', false);
+                break;
+              case 1: // B -> drink (b)
+                if (!paused) {
+                  try {
+                    const a = arena.current;
+                    if (a && canDrinkAt(a.x, a.y) && isOffCooldown('drink')) startAction('drink', false);
+                  } catch (e) { }
+                }
+                break;
+              case 9: // Start -> pause
+                handlePauseRequest();
+                break;
+              case 8: // Back -> pause as well
+                handlePauseRequest();
+                break;
+            }
+          }
+        }
+
+        // volume adjustments while held
+        const nowSec = performance.now() / 1000;
+        // LB (4) increases music, LT (6) decreases music
+        if (gp.buttons[4] && gp.buttons[4].pressed) {
+          const next = Math.max(0, Math.min(1, (musicVolRef.current || 0) + volRate * (1 / 60)));
+          setMusicVol(next); syncAudioVolumes(next, sfxVolRef.current);
+        }
+        if (gp.buttons[6] && gp.buttons[6].value > 0.2) {
+          const next = Math.max(0, Math.min(1, (musicVolRef.current || 0) - volRate * gp.buttons[6].value * (1 / 60)));
+          setMusicVol(next); syncAudioVolumes(next, sfxVolRef.current);
+        }
+        // RB (5) increases sfx, RT (7) decreases sfx
+        if (gp.buttons[5] && gp.buttons[5].pressed) {
+          const next = Math.max(0, Math.min(1, (sfxVolRef.current || 0) + volRate * (1 / 60)));
+          setSfxVol(next); syncAudioVolumes(musicVolRef.current, next);
+        }
+        if (gp.buttons[7] && gp.buttons[7].value > 0.2) {
+          const next = Math.max(0, Math.min(1, (sfxVolRef.current || 0) - volRate * gp.buttons[7].value * (1 / 60)));
+          setSfxVol(next); syncAudioVolumes(musicVolRef.current, next);
+        }
+
+        prevButtons = buttons;
+      }
+      rafId = requestAnimationFrame(poll);
+    }
+    rafId = requestAnimationFrame(poll);
+    return () => cancelAnimationFrame(rafId);
+  }, [paused]);
+
   const nowPerf = performance.now();
   const remSec = (k) => Math.max(0, Math.ceil(((cooldownsRef.current[k] || 0) - nowPerf) / 1000));
   const punchRem = remSec('punch'), kickRem = remSec('kick'), slapRem = remSec('slap'), drinkRem = remSec('drink');
@@ -1174,6 +1526,13 @@ function App() {
                 <div className="hitFlash" ref={flashRef} />
               </div>
               <FXLayer fxRefs={fxRefs} />
+              {canDrinkAt(arena.current.x, arena.current.y) && isOffCooldown('drink') && !arena.current.dead && !(arena.current.action && arena.current.action.key === 'drinking') && (
+                <div style={{
+                  position: 'absolute', left: '50%', top: (MOUTH - 46) + 'px', transform: 'translateX(-50%)',
+                  padding: '8px 12px', borderRadius: 8, background: 'rgba(0,0,0,0.78)', color: '#fff', fontWeight: 900, fontSize: 16,
+                  pointerEvents: 'none', textShadow: '0 1px 3px rgba(0,0,0,0.85)'
+                }}>drink to heal.</div>
+              )}
             </div>
           </div>
           <div className="hud">
@@ -1242,7 +1601,7 @@ function App() {
           {gameStarted && gameOver && (
             <div className="mainMenu">
               <div className="menuCard">
-                <h1>GAME OVER</h1>
+                <h1>GAME OVER!</h1>
                 <div className="menuDesc">Your run has ended.</div>
                 <div className="menuStats" style={{ margin: '18px 0 20px', textAlign: 'center', fontSize: 14, lineHeight: 1.7 }}>
                   <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 10 }}>Kills: {uiKills}</div>
@@ -1251,6 +1610,7 @@ function App() {
                 </div>
                 <button
                   className="startButton restartButton"
+                  ref={gameOverRestartRef}
                   onPointerDown={e => e.stopPropagation()}
                   onClick={e => {
                     e.stopPropagation();
@@ -1269,11 +1629,11 @@ function App() {
                 <div className="menuControls">
                   <div className="menuRow">
                     <span>Music</span>
-                    <input type="range" min="0" max="1" step="0.01" value={musicVol} onInput={e => { const v = parseFloat(e.target.value); setMusicVol(v); syncAudioVolumes(v, sfxVolRef.current); }} onChange={e => { const v = parseFloat(e.target.value); setMusicVol(v); syncAudioVolumes(v, sfxVolRef.current); }} />
+                    <input ref={pauseMusicRef} type="range" min="0" max="1" step="0.01" value={musicVol} onInput={e => { const v = parseFloat(e.target.value); setMusicVol(v); syncAudioVolumes(v, sfxVolRef.current); }} onChange={e => { const v = parseFloat(e.target.value); setMusicVol(v); syncAudioVolumes(v, sfxVolRef.current); }} />
                   </div>
                   <div className="menuRow">
                     <span>SFX</span>
-                    <input type="range" min="0" max="1" step="0.01" value={sfxVol} onInput={e => { const v = parseFloat(e.target.value); setSfxVol(v); syncAudioVolumes(musicVolRef.current, v); }} onChange={e => { const v = parseFloat(e.target.value); setSfxVol(v); syncAudioVolumes(musicVolRef.current, v); }} />
+                    <input ref={pauseSfxRef} type="range" min="0" max="1" step="0.01" value={sfxVol} onInput={e => { const v = parseFloat(e.target.value); setSfxVol(v); syncAudioVolumes(musicVolRef.current, v); }} onChange={e => { const v = parseFloat(e.target.value); setSfxVol(v); syncAudioVolumes(musicVolRef.current, v); }} />
                   </div>
                 </div>
                 <div className="menuHelp">
@@ -1288,6 +1648,7 @@ function App() {
                 <button
                   className="startButton"
                   onPointerDown={e => e.stopPropagation()}
+                  ref={pauseResumeRef}
                   onClick={e => {
                     e.stopPropagation();
                     // start the resume countdown
@@ -1298,6 +1659,7 @@ function App() {
                 </button>
                 <button
                   className="startButton restartButton"
+                  ref={pauseRestartRef}
                   onPointerDown={e => e.stopPropagation()}
                   onClick={e => {
                     e.stopPropagation();
@@ -1316,11 +1678,11 @@ function App() {
                 <div className="menuControls">
                   <div className="menuRow">
                     <span>Music</span>
-                    <input type="range" min="0" max="1" step="0.01" value={musicVol} onInput={e => { const v = parseFloat(e.target.value); setMusicVol(v); syncAudioVolumes(v, sfxVolRef.current); }} onChange={e => { const v = parseFloat(e.target.value); setMusicVol(v); syncAudioVolumes(v, sfxVolRef.current); }} />
+                    <input ref={startMusicRef} type="range" min="0" max="1" step="0.01" value={musicVol} onInput={e => { const v = parseFloat(e.target.value); setMusicVol(v); syncAudioVolumes(v, sfxVolRef.current); }} onChange={e => { const v = parseFloat(e.target.value); setMusicVol(v); syncAudioVolumes(v, sfxVolRef.current); }} />
                   </div>
                   <div className="menuRow">
                     <span>SFX</span>
-                    <input type="range" min="0" max="1" step="0.01" value={sfxVol} onInput={e => { const v = parseFloat(e.target.value); setSfxVol(v); syncAudioVolumes(musicVolRef.current, v); }} onChange={e => { const v = parseFloat(e.target.value); setSfxVol(v); syncAudioVolumes(musicVolRef.current, v); }} />
+                    <input ref={startSfxRef} type="range" min="0" max="1" step="0.01" value={sfxVol} onInput={e => { const v = parseFloat(e.target.value); setSfxVol(v); syncAudioVolumes(musicVolRef.current, v); }} onChange={e => { const v = parseFloat(e.target.value); setSfxVol(v); syncAudioVolumes(musicVolRef.current, v); }} />
                   </div>
                 </div>
                 <div className="menuHelp">
@@ -1335,6 +1697,7 @@ function App() {
                 <button
                   className="startButton"
                   onPointerDown={e => e.stopPropagation()}
+                  ref={startBtnRef}
                   onClick={e => {
                     e.stopPropagation();
                     setGameStarted(true);
@@ -1343,6 +1706,37 @@ function App() {
                 >
                   Start Game
                 </button>
+              </div>
+            </div>
+          )}
+          {/* Mobile controls (visible only on touch devices) */}
+          {showMobileControls && gameStarted && !paused && !gameOver && (
+            <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none' }}>
+              <div
+                ref={joystickRef}
+                onPointerDown={onJoystickPointerDown}
+                onPointerMove={onJoystickPointerMove}
+                onPointerUp={onJoystickPointerUp}
+                onPointerCancel={onJoystickPointerUp}
+                style={{
+                  position: 'absolute', left: 18, bottom: 18,
+                  width: 128, height: 128, borderRadius: 999, background: 'rgba(0,0,0,0.36)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'auto', touchAction: 'none', boxShadow: '0 6px 18px rgba(0,0,0,0.4)'
+                }}
+              >
+                <div ref={joystickKnobRef} style={{ width: 64, height: 64, borderRadius: 999, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: 'inset 0 2px 6px rgba(0,0,0,0.25)' }} />
+              </div>
+              <div style={{ position: 'absolute', right: 18, bottom: 18, width: 220, height: 220, pointerEvents: 'auto' }}>
+                <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                  {/* Top - Slap (Y) */}
+                  <button onPointerDown={e => { e.stopPropagation(); e.preventDefault(); mobileAction('slap'); }} style={{ position: 'absolute', left: '50%', top: 12, transform: 'translateX(-50%)', width: 72, height: 72, borderRadius: 999, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(0,0,0,0.12)', fontWeight: 700 }}>Slap</button>
+                  {/* Left - Kick (X) */}
+                  <button onPointerDown={e => { e.stopPropagation(); e.preventDefault(); mobileAction('kick'); }} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', width: 72, height: 72, borderRadius: 999, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(0,0,0,0.12)', fontWeight: 700 }}>Kick</button>
+                  {/* Right - Drink (B) */}
+                  <button onPointerDown={e => { e.stopPropagation(); e.preventDefault(); mobileAction('drink'); }} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', width: 72, height: 72, borderRadius: 999, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(0,0,0,0.12)', fontWeight: 700 }}>Drink</button>
+                  {/* Bottom - Punch (A) */}
+                  <button onPointerDown={e => { e.stopPropagation(); e.preventDefault(); mobileAction('punch'); }} style={{ position: 'absolute', left: '50%', bottom: 12, transform: 'translateX(-50%)', width: 72, height: 72, borderRadius: 999, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(0,0,0,0.12)', fontWeight: 700 }}>Punch</button>
+                </div>
               </div>
             </div>
           )}
