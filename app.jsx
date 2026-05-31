@@ -11,6 +11,7 @@ const ZONE_TOL = 70;
 
 const PLAYER_MAX_HP = 10;
 const ENEMY_MAX_HP = 5;
+const NAV_CELL_SIZE = 18;
 
 // body metrics relative to feet point (px, up = negative)
 const CHEST = -152, HEAD = -202, MOUTH = -184, HAND = -116;
@@ -60,6 +61,10 @@ function FXLayer({ fxRefs }) {
 
 function App() {
   const [speed, setSpeed] = useState(1);
+  const [musicVol, setMusicVol] = useState(0.6);
+  const [sfxVol, setSfxVol] = useState(0.9);
+  const musicVolRef = useRef(musicVol);
+  const sfxVolRef = useRef(sfxVol);
 
   const stageRef = useRef(null);
   const worldRef = useRef(null);
@@ -73,7 +78,9 @@ function App() {
     layer: useRef(), spark: useRef(), streak: useRef(), dust: useRef(), stars: useRef(),
     glass: useRef(), liquid: useRef(), foam: useRef(), sweat: useRef(), slap: useRef(), burst: useRef(),
   };
+  const sounds = useRef({});
   const zoneMask = useRef({ ready: false, w: MAP_W, h: MAP_H, cells: null });
+  const navGrid = useRef({ ready: false, w: 0, h: 0, cellSize: NAV_CELL_SIZE, cells: null });
   // gameplay refs/state
   const playerHPRef = useRef(PLAYER_MAX_HP);
   const [uiHP, setUiHP] = useState(PLAYER_MAX_HP);
@@ -84,6 +91,16 @@ function App() {
   const enemyId = useRef(1);
   const lastSpawnAt = useRef(0);
   const [tick, setTick] = useState(0); // forces HUD updates
+
+  function syncAudioVolumes(nextMusicVol = musicVol, nextSfxVol = sfxVol) {
+    musicVolRef.current = nextMusicVol;
+    sfxVolRef.current = nextSfxVol;
+    const s = sounds.current;
+    if (s.background) s.background.volume = nextMusicVol;
+    ['enemyDeath', 'damageTaken', 'damageGiven', 'drinking', 'endOfGame'].forEach(key => {
+      if (s[key]) s[key].volume = nextSfxVol;
+    });
+  }
 
   function updateWorldLayout() {
     const stage = stageRef.current;
@@ -115,6 +132,194 @@ function App() {
   function canStandAt(x, y) {
     const zone = zoneAt(x, y);
     return zone === 1 || zone === 2;
+  }
+
+  function canEnemySpawnAt(x, y) {
+    return canStandAt(x, y);
+  }
+
+  function buildNavGrid() {
+    const mask = zoneMask.current;
+    if (!mask.ready || !mask.cells) return;
+
+    const cellSize = NAV_CELL_SIZE;
+    const w = Math.ceil(mask.w / cellSize);
+    const h = Math.ceil(mask.h / cellSize);
+    const cells = new Uint8Array(w * h);
+
+    for (let cy = 0; cy < h; cy++) {
+      for (let cx = 0; cx < w; cx++) {
+        const px = clamp(Math.round(cx * cellSize + cellSize / 2), 0, mask.w - 1);
+        const py = clamp(Math.round(cy * cellSize + cellSize / 2), 0, mask.h - 1);
+        cells[cy * w + cx] = canStandAt(px, py) ? 1 : 0;
+      }
+    }
+
+    navGrid.current = { ready: true, w, h, cellSize, cells };
+  }
+
+  function navCellFromPoint(x, y) {
+    const grid = navGrid.current;
+    if (!grid.ready || !grid.cells) return null;
+    return {
+      x: clamp(Math.floor(x / grid.cellSize), 0, grid.w - 1),
+      y: clamp(Math.floor(y / grid.cellSize), 0, grid.h - 1),
+    };
+  }
+
+  function navPointFromCell(cx, cy) {
+    const grid = navGrid.current;
+    return {
+      x: clamp(Math.round(cx * grid.cellSize + grid.cellSize / 2), 0, MAP_W - 1),
+      y: clamp(Math.round(cy * grid.cellSize + grid.cellSize / 2), 0, MAP_H - 1),
+    };
+  }
+
+  function navCellWalkable(cx, cy) {
+    const grid = navGrid.current;
+    if (!grid.ready || !grid.cells) return false;
+    if (cx < 0 || cy < 0 || cx >= grid.w || cy >= grid.h) return false;
+    return grid.cells[cy * grid.w + cx] === 1;
+  }
+
+  function findNearestWalkableNavCell(cx, cy, maxRadius = 14) {
+    if (navCellWalkable(cx, cy)) return { x: cx, y: cy };
+    for (let radius = 1; radius <= maxRadius; radius++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const dy = radius - Math.abs(dx);
+        const candidates = dy === 0 ? [[cx + dx, cy]] : [[cx + dx, cy + dy], [cx + dx, cy - dy]];
+        for (const [nx, ny] of candidates) {
+          if (navCellWalkable(nx, ny)) return { x: nx, y: ny };
+        }
+      }
+    }
+    return null;
+  }
+
+  function findNavPath(startX, startY, targetX, targetY) {
+    const grid = navGrid.current;
+    if (!grid.ready || !grid.cells) return null;
+
+    const start = navCellFromPoint(startX, startY);
+    const target = navCellFromPoint(targetX, targetY);
+    if (!start || !target) return null;
+
+    const startCell = findNearestWalkableNavCell(start.x, start.y);
+    const targetCell = findNearestWalkableNavCell(target.x, target.y);
+    if (!startCell || !targetCell) return null;
+
+    const w = grid.w;
+    const h = grid.h;
+    const size = w * h;
+    const parents = new Int32Array(size);
+    parents.fill(-1);
+    const queue = new Int32Array(size);
+    let head = 0;
+    let tail = 0;
+    const startIndex = startCell.y * w + startCell.x;
+    const targetIndex = targetCell.y * w + targetCell.x;
+    queue[tail++] = startIndex;
+    parents[startIndex] = startIndex;
+
+    const neighbors = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    let found = false;
+
+    while (head < tail) {
+      const current = queue[head++];
+      if (current === targetIndex) {
+        found = true;
+        break;
+      }
+
+      const cx = current % w;
+      const cy = Math.floor(current / w);
+      for (const [dx, dy] of neighbors) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (!navCellWalkable(nx, ny)) continue;
+        const nextIndex = ny * w + nx;
+        if (parents[nextIndex] !== -1) continue;
+        parents[nextIndex] = current;
+        queue[tail++] = nextIndex;
+      }
+    }
+
+    if (!found) return null;
+
+    const path = [];
+    let current = targetIndex;
+    while (current !== startIndex) {
+      const cx = current % w;
+      const cy = Math.floor(current / w);
+      path.push(navPointFromCell(cx, cy));
+      current = parents[current];
+      if (current === -1) return null;
+    }
+
+    path.reverse();
+    return path;
+  }
+
+  function getEnemyPath(enemy, targetX, targetY, now) {
+    const targetCell = navCellFromPoint(targetX, targetY);
+    if (!targetCell) return null;
+    const targetKey = `${targetCell.x},${targetCell.y}`;
+    if (enemy.path && enemy.pathTargetKey === targetKey && enemy.pathRecalcAt > now && enemy.path.length) {
+      return enemy.path;
+    }
+
+    const path = findNavPath(enemy.x, enemy.y, targetX, targetY) || [];
+    enemy.path = path;
+    enemy.pathTargetKey = targetKey;
+    enemy.pathRecalcAt = now + 350;
+    return path;
+  }
+
+  function pickEnemyChaseStep(enemy, targetX, targetY, dt) {
+    const maxStep = enemy.speed * dt;
+    const dx = targetX - enemy.x;
+    const dy = targetY - enemy.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist <= 0.001) return null;
+
+    const baseAngle = Math.atan2(dy, dx);
+    const angleOffsets = [0, 18, -18, 36, -36, 54, -54, 72, -72, 90, -90, 108, -108, 135, -135];
+    const steps = Math.min(maxStep, dist);
+    const candidates = [];
+
+    for (const offset of angleOffsets) {
+      const ang = baseAngle + (offset * Math.PI) / 180;
+      const nx = enemy.x + Math.cos(ang) * steps;
+      const ny = enemy.y + Math.sin(ang) * steps;
+      if (!canStandAt(nx, ny)) continue;
+
+      const nextDist = Math.hypot(targetX - nx, targetY - ny);
+      const zonePenalty = zoneAt(nx, ny) === 1 ? 0 : 8;
+      const stuckPenalty = (enemy.stuckFrames || 0) * 0.25;
+      const anglePenalty = Math.abs(offset) * 0.08;
+      candidates.push({ x: nx, y: ny, score: nextDist + zonePenalty + stuckPenalty + anglePenalty });
+    }
+
+    if (candidates.length) {
+      candidates.sort((a, b) => a.score - b.score);
+      return candidates[0];
+    }
+
+    const fallbackOffsets = [
+      [Math.sign(dx), 0],
+      [0, Math.sign(dy)],
+      [Math.sign(dx), Math.sign(dy)],
+      [Math.sign(dx), -Math.sign(dy)],
+      [-Math.sign(dx), Math.sign(dy)],
+    ];
+
+    for (const [fx, fy] of fallbackOffsets) {
+      const nx = enemy.x + fx * steps;
+      const ny = enemy.y + fy * steps;
+      if (canStandAt(nx, ny)) return { x: nx, y: ny, score: Math.hypot(targetX - nx, targetY - ny) };
+    }
+
+    return null;
   }
 
   function canDrinkAt(x, y) {
@@ -158,19 +363,46 @@ function App() {
     el.style.left = '0'; el.style.top = '0';
     el.innerHTML = `
       <div class="charScale">
-        <img src="sprites/tellak_front.png" />
-        <img class="hide" src="sprites/tellak_back.png" />
+        <img class="front" src="sprites/enemy_front.png" />
+        <img class="back hide" src="sprites/enemy_back.png" />
         <div class="hitFlash"></div>
       </div>`;
     world.appendChild(el);
+    // determine spawn coords: prefer provided coordinates, otherwise find a nearby allowed point
+    function findSpawn(px, py) {
+      if (typeof px === 'number' && typeof py === 'number' && canEnemySpawnAt(px, py)) return [px, py];
+      // try sampling around player start
+      for (let attempt = 0; attempt < 300; attempt++) {
+        const r = Math.random() * 600;
+        const a = Math.random() * Math.PI * 2;
+        const sx = Math.round(PLAYER_START_X + Math.cos(a) * r);
+        const sy = Math.round(PLAYER_START_Y + Math.sin(a) * r);
+        if (sx >= 0 && sy >= 0 && sx < MAP_W && sy < MAP_H && canEnemySpawnAt(sx, sy)) return [sx, sy];
+      }
+      // fallback: random scan across the map
+      for (let attempt = 0; attempt < 1000; attempt++) {
+        const sx = Math.floor(Math.random() * MAP_W);
+        const sy = Math.floor(Math.random() * MAP_H);
+        if (canEnemySpawnAt(sx, sy)) return [sx, sy];
+      }
+      return [PLAYER_START_X, PLAYER_START_Y];
+    }
+    const [spawnX, spawnY] = findSpawn(x, y);
     const enemy = {
       id,
-      x: x || (PLAYER_START_X + (Math.random() - 0.5) * 300),
-      y: y || (PLAYER_START_Y + (Math.random() - 0.5) * 300),
+      x: spawnX,
+      y: spawnY,
       hp: ENEMY_MAX_HP,
       el,
       nextAttack: 0,
       speed: 120 + Math.random() * 40,
+      scale: 1.5,
+      // hitbox radius in pixels (in arena space)
+      hitbox: 60,
+      stuckFrames: 0,
+      path: [],
+      pathTargetKey: '',
+      pathRecalcAt: 0,
     };
     enemiesRef.current.push(enemy);
     return enemy;
@@ -189,25 +421,63 @@ function App() {
     cooldownsRef.current[action] = performance.now() + ms;
   }
 
-  function damageEnemy(enemy, amount) {
+  function showFloatingHitText(x, y, text, className) {
+    const world = worldRef.current;
+    if (!world) return;
+    const el = document.createElement('div');
+    el.className = className;
+    el.textContent = text;
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    world.appendChild(el);
+    window.setTimeout(() => {
+      try { if (el.parentNode) el.parentNode.removeChild(el); } catch (e) { }
+    }, 800);
+  }
+
+  function showEnemyHitText(enemy, text, critical = false) {
+    if (!enemy) return;
+    showFloatingHitText(enemy.x, enemy.y - 220, text, `enemyHitText${critical ? ' critical' : ''}`);
+  }
+
+  function showPlayerHitText(text) {
+    showFloatingHitText(arena.current.x, arena.current.y - 230, text, 'playerHitText');
+  }
+
+  function damageEnemy(enemy, amount, feedback = {}) {
     if (!enemy) return false;
+    const critical = !!feedback.critical;
+    const label = feedback.label || (critical ? 'critical hit!' : (amount >= 3 ? `hit! x${amount}` : amount >= 2 ? `hit! x${amount}` : 'hit!'));
+    showEnemyHitText(enemy, label, critical);
     enemy.hp -= amount;
     if (enemy.hp <= 0) {
       // death
       removeEnemy(enemy);
       killCountRef.current += 1;
       setUiKills(killCountRef.current);
+      // play enemy death SFX
+      try { if (sounds.current.enemyDeath) { sounds.current.enemyDeath.volume = sfxVolRef.current; sounds.current.enemyDeath.currentTime = 0; sounds.current.enemyDeath.play(); } } catch (e) { }
       return true;
     }
     return false;
   }
 
   function damagePlayer(amount) {
+    showPlayerHitText('hit!');
     playerHPRef.current = Math.max(0, playerHPRef.current - amount);
     setUiHP(playerHPRef.current);
+    // play damage taken SFX
+    try { if (sounds.current.damageTaken) { sounds.current.damageTaken.volume = sfxVolRef.current; sounds.current.damageTaken.currentTime = 0; sounds.current.damageTaken.play(); } } catch (e) { }
     if (playerHPRef.current <= 0) {
       // death: trigger death action
-      arena.current.action = { key: 'death', start: performance.now(), dur: A.death.dur, hold: true };
+      arena.current.dead = true;
+      arena.current.keys.clear();
+      arena.current.action = { key: 'death', start: performance.now(), dur: (A.death && A.death.dur) || 2, hold: true };
+      // stop background and play end-of-game music
+      try {
+        if (sounds.current.background) { sounds.current.background.pause(); sounds.current.background.currentTime = 0; }
+        if (sounds.current.endOfGame) { sounds.current.endOfGame.volume = musicVolRef.current; sounds.current.endOfGame.currentTime = 0; sounds.current.endOfGame.play(); }
+      } catch (e) { }
     }
   }
 
@@ -219,10 +489,11 @@ function App() {
   function processActionHit(key) {
     const now = performance.now();
     if (key === 'drink') {
-      // heal and cooldown 60s
+      // heal and cooldown 30s
       if (!isOffCooldown('drink')) return;
       healPlayerFull();
-      setCooldown('drink', 60 * 1000);
+      setCooldown('drink', 30 * 1000);
+      try { if (sounds.current.drinking) { sounds.current.drinking.volume = sfxVolRef.current; sounds.current.drinking.currentTime = 0; sounds.current.drinking.play(); } } catch (e) { }
       return;
     }
     // attack types
@@ -230,25 +501,33 @@ function App() {
     const damages = { punch: 1, kick: 2, slap: 3 };
     const cds = { punch: 1000, kick: 2000, slap: 10000 };
     if (!isOffCooldown(key)) return;
-    // find nearest enemy in range
-    let target = null;
-    let bestDist = 1e9;
+    // find enemies in range
+    const hits = [];
     for (const e of enemiesRef.current) {
       const dx = e.x - arena.current.x, dy = e.y - arena.current.y;
       const d = Math.hypot(dx, dy);
-      if (d <= ranges[key] && d < bestDist) { bestDist = d; target = e; }
+      const effRange = ranges[key] + (e.hitbox || 0);
+      if (d <= effRange) hits.push(e);
     }
-    if (!target) {
+    if (!hits.length) {
       setCooldown(key, cds[key]);
       return;
     }
-    // slap has 25% instant kill
+    // slap has 25% instant kill and hits all enemies in range
     if (key === 'slap') {
-      if (Math.random() < 0.25) {
-        damageEnemy(target, 999);
-      } else damageEnemy(target, damages[key]);
+      let played = false;
+      for (const target of hits) {
+        if (Math.random() < 0.25) damageEnemy(target, target.hp, { critical: true, label: 'critical hit!' });
+        else damageEnemy(target, damages[key], { label: 'hit! x3' });
+        played = true;
+      }
+      if (played) {
+        try { if (sounds.current.damageGiven) { sounds.current.damageGiven.volume = sfxVolRef.current; sounds.current.damageGiven.currentTime = 0; sounds.current.damageGiven.play(); } } catch (e) { }
+      }
     } else {
-      damageEnemy(target, damages[key]);
+      if (key === 'kick') damageEnemy(hits[0], damages[key], { label: 'hit! x2' });
+      else damageEnemy(hits[0], damages[key], { label: 'hit!' });
+      try { if (sounds.current.damageGiven) { sounds.current.damageGiven.volume = sfxVolRef.current; sounds.current.damageGiven.currentTime = 0; sounds.current.damageGiven.play(); } } catch (e) { }
     }
     setCooldown(key, cds[key]);
   }
@@ -279,6 +558,7 @@ function App() {
       }
 
       zoneMask.current = { ready: true, w: canvas.width, h: canvas.height, cells };
+      buildNavGrid();
       snapPlayerToAllowedZone();
     };
   }
@@ -396,6 +676,41 @@ function App() {
     }
   }
 
+  // apply a pose to an enemy DOM element (doesn't use refs)
+  function applyPoseToEnemy(enemy, key, p, dirName) {
+    const meta = A[key];
+    let d;
+    if (meta.dirable) d = DIRS[dirName];
+    else d = { vec: [0, 1], sprite: meta.forceSprite || 'front', flip: meta.forceFlip || false };
+    const pose = meta.fn(p, d);
+    const sprite = pose.sprite || meta.forceSprite || d.sprite;
+    const flip = pose.flip != null ? pose.flip : (meta.forceFlip != null ? meta.forceFlip : d.flip);
+
+    const el = enemy.el;
+    if (!el) return;
+    const front = el.querySelector('img.front');
+    const back = el.querySelector('img.back');
+    const scaleEl = el.querySelector('.charScale');
+    const flash = el.querySelector('.hitFlash');
+
+    if (front && back) {
+      front.classList.toggle('hide', sprite !== 'front');
+      back.classList.toggle('hide', sprite !== 'back');
+    }
+    if (scaleEl) {
+      const sgnX = flip ? -1 : 1;
+      scaleEl.style.transform = `translate(-50%,-100%) rotate(${pose.rot.toFixed(2)}deg) scale(${(pose.sx * sgnX).toFixed(3)},${pose.sy.toFixed(3)})`;
+    }
+    // position including pose offsets
+    const baseX = enemy.x;
+    const baseY = enemy.y;
+    const px = baseX + (pose.dx || 0);
+    const py = baseY + (pose.dy || 0);
+    el.style.transform = `translate3d(${px}px,${py}px,0)`;
+
+    if (flash) flash.style.opacity = (pose.fx && pose.fx.hit) ? 0.85 : 0;
+  }
+
   function setFX(ref, v, x, y, txf, maxOp = 1) {
     if (!ref.current) return;
     v = v || 0;
@@ -411,6 +726,21 @@ function App() {
     const onResize = () => updateWorldLayout();
     updateWorldLayout();
     loadZoneMask();
+    // preload sounds
+    try {
+      sounds.current.background = new Audio('sounds/background/background_sound.mp3');
+      sounds.current.background.loop = true;
+      sounds.current.background.volume = musicVolRef.current;
+      // try to autoplay muted until user interacts
+      sounds.current.background.play().catch(() => { });
+      sounds.current.endOfGame = new Audio('sounds/endofgame/gameover.mp3');
+      sounds.current.enemyDeath = new Audio('sounds/enemydeath/enemykilled.mp3');
+      sounds.current.damageTaken = new Audio('sounds/damagetaken/damagetaken_soundeffect.mp3');
+      sounds.current.damageGiven = new Audio('sounds/damagegiven/damagegiven_soundeffect.mp3');
+      sounds.current.drinking = new Audio('sounds/drinkingayran/drinking_soundeffect.mp3');
+      // set initial volumes
+      if (sounds.current.background) sounds.current.background.volume = musicVolRef.current;
+    } catch (e) { console.warn('Audio init failed', e); }
     if (arena.current.x === 0 && arena.current.y === 0) {
       arena.current.x = PLAYER_START_X;
       arena.current.y = PLAYER_START_Y;
@@ -435,6 +765,10 @@ function App() {
     };
     // eslint-disable-next-line
   }, []);
+
+  useEffect(() => {
+    syncAudioVolumes(musicVol, sfxVol);
+  }, [musicVol, sfxVol]);
 
   // ---------- arena controller ----------
   function runArena(now, dt, c) {
@@ -499,24 +833,100 @@ function App() {
       const dx = arena.current.x - en.x;
       const dy = arena.current.y - en.y;
       const dist = Math.hypot(dx, dy);
-      // move towards player if not too close
-      if (dist > 80) {
-        const nx = en.x + (dx / dist) * en.speed * dt;
-        const ny = en.y + (dy / dist) * en.speed * dt;
-        // keep on allowed zones if possible
-        if (canStandAt(nx, ny)) { en.x = nx; en.y = ny; }
-      } else {
-        // in range to attack
-        if (performance.now() >= (en.nextAttack || 0)) {
-          en.nextAttack = performance.now() + 2000; // 2s enemy attack cd
-          damagePlayer(1);
+      const dirName = dist > 0 ? dirFromVec(dx, dy) : a.facing;
+
+      // if enemy has an action (attack pose), process it
+      if (en.action) {
+        const meta = A[en.action.key];
+        const e = (now - en.action.start) / 1000;
+        let p = Math.min(1, e / meta.dur);
+        if (p >= 1 && en.action.hold) p = 1;
+        else if (p >= 1 && !en.action.hold) en.action = null;
+        if (en.action) {
+          applyPoseToEnemy(en, en.action.key, p, dirName);
+          const hitTime = 0.45;
+          if (!en.action.hitApplied && p >= hitTime) {
+            en.action.hitApplied = true;
+            // enemy attack deals 1 damage
+            damagePlayer(1);
+          }
+          continue;
         }
       }
-      // update enemy DOM
-      if (en.el) {
-        const elScale = en.el.querySelector('.charScale');
-        if (elScale) elScale.style.transform = `translate(-50%,-100%) scale(1,1)`;
-        en.el.style.transform = `translate3d(${en.x}px,${en.y}px,0)`;
+
+      // move towards player if not too close
+      const closeThreshold = 80 + (en.hitbox || 0);
+      if (dist > closeThreshold) {
+        const path = getEnemyPath(en, arena.current.x, arena.current.y, now);
+        let moved = false;
+
+        if (path && path.length) {
+          const waypoint = path[0];
+          const moveDx = waypoint.x - en.x;
+          const moveDy = waypoint.y - en.y;
+          const moveDist = Math.hypot(moveDx, moveDy);
+          const step = en.speed * dt;
+          const moveDirName = moveDist > 0 ? dirFromVec(moveDx, moveDy) : dirName;
+
+          if (moveDist <= Math.max(4, step)) {
+            en.x = waypoint.x;
+            en.y = waypoint.y;
+            path.shift();
+            en.stuckFrames = 0;
+            moved = true;
+          } else {
+            const nx = en.x + (moveDx / moveDist) * step;
+            const ny = en.y + (moveDy / moveDist) * step;
+            if (canStandAt(nx, ny)) {
+              en.x = nx;
+              en.y = ny;
+              en.stuckFrames = 0;
+              moved = true;
+            } else {
+              en.path = [];
+              en.pathRecalcAt = now;
+              en.stuckFrames = Math.min((en.stuckFrames || 0) + 1, 120);
+            }
+          }
+
+          if (moved) {
+            const e = ((now + en.id * 97) / 1000) % A.walk.dur;
+            applyPoseToEnemy(en, 'walk', (e / A.walk.dur) % 1, moveDirName);
+          }
+        }
+
+        if (!moved) {
+          const step = pickEnemyChaseStep(en, arena.current.x, arena.current.y, dt);
+          if (step) {
+            en.x = step.x;
+            en.y = step.y;
+            en.stuckFrames = 0;
+            const e = ((now + en.id * 97) / 1000) % A.walk.dur;
+            applyPoseToEnemy(en, 'walk', (e / A.walk.dur) % 1, dirName);
+          } else {
+            en.stuckFrames = Math.min((en.stuckFrames || 0) + 1, 120);
+            const e = ((now + en.id * 53) / 1000) % A.idle.dur;
+            applyPoseToEnemy(en, 'idle', e / A.idle.dur, dirName);
+          }
+        }
+      } else {
+        // in range to attack: queue attack action
+        if (performance.now() >= (en.nextAttack || 0)) {
+          en.nextAttack = performance.now() + 2000; // 2s enemy attack cd
+          en.action = { key: 'punch', start: performance.now(), dur: A.punch.dur, hold: false, hitApplied: false };
+          // pose will be applied by action handling next loop
+        } else {
+          // idle pose while waiting
+          const e = ((now + en.id * 53) / 1000) % A.idle.dur;
+          applyPoseToEnemy(en, 'idle', e / A.idle.dur, dirName);
+        }
+      }
+
+      // update enemy DOM position if no pose moved it
+      if (en.el && (!en.action)) {
+        // applyPoseToEnemy already set transform including pose offsets
+        // ensure base transform if not applied
+        en.el.style.transform = en.el.style.transform || `translate3d(${en.x}px,${en.y}px,0)`;
       }
     }
 
@@ -542,6 +952,7 @@ function App() {
     const a = arena.current;
     const ACT = { j: ['punch', false], k: ['kick', false], l: ['slap', false], b: ['drink', false], x: ['death', true] };
     function down(e) {
+      if (a.dead) return;
       const key = e.key.toLowerCase();
       if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(key)) {
         e.preventDefault();
@@ -596,13 +1007,54 @@ function App() {
             </div>
           </div>
           <div className="hud">
-            <div className="row"><div className="label">HP</div><div className="val">{uiHP}/{PLAYER_MAX_HP}</div></div>
-            <div className="row"><div className="label">Kills</div><div className="val">{uiKills}</div></div>
+            <div className="row"><div className="label">Music</div>
+              <div className="val"><input type="range" min="0" max="1" step="0.01" value={musicVol} onInput={e => { const v = parseFloat(e.target.value); setMusicVol(v); syncAudioVolumes(v, sfxVolRef.current); }} onChange={e => { const v = parseFloat(e.target.value); setMusicVol(v); syncAudioVolumes(v, sfxVolRef.current); }} /></div>
+            </div>
+            <div className="row"><div className="label">SFX</div>
+              <div className="val"><input type="range" min="0" max="1" step="0.01" value={sfxVol} onInput={e => { const v = parseFloat(e.target.value); setSfxVol(v); syncAudioVolumes(musicVolRef.current, v); }} onChange={e => { const v = parseFloat(e.target.value); setSfxVol(v); syncAudioVolumes(musicVolRef.current, v); }} /></div>
+            </div>
+            {/* Punch and Kick cooldowns hidden from HUD */}
+            <div className="row"><div className="label">Ottoman Slap</div><div className="val">{slapRem}s</div></div>
+            <div className="row"><div className="label">Sodalı Ayran</div><div className="val">{drinkRem}s</div></div>
             <div style={{ height: 6 }} />
-            <div className="row"><div className="label">Punch</div><div className="val">{punchRem}s</div></div>
-            <div className="row"><div className="label">Kick</div><div className="val">{kickRem}s</div></div>
-            <div className="row"><div className="label">Slap</div><div className="val">{slapRem}s</div></div>
-            <div className="row"><div className="label">Drink</div><div className="val">{drinkRem}s</div></div>
+            <div className="row"><div className="label">Kills</div><div className="val">{uiKills}</div></div>
+            <div className="row" style={{ alignItems: 'center' }}>
+              <div className="label">HP</div>
+              <div className="val" style={{ flex: 1 }}>
+                <div style={{
+                  position: 'relative',
+                  height: 12,
+                  borderRadius: 999,
+                  overflow: 'hidden',
+                  background: 'rgba(255,255,255,0.12)',
+                  border: '1px solid rgba(255,255,255,0.15)'
+                }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${Math.max(0, Math.min(100, (uiHP / PLAYER_MAX_HP) * 100))}%`,
+                    borderRadius: 999,
+                    background: uiHP > 3 ? 'linear-gradient(90deg, #38d66b, #d5ff74)' : 'linear-gradient(90deg, #ff5f5f, #ffb347)',
+                    transition: 'width 120ms linear'
+                  }} />
+                  <div style={{
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: '0.04em',
+                    color: uiHP === 5 ? 'transparent' : (uiHP > 4 ? '#111' : '#fff'),
+                    background: uiHP === 5 ? 'linear-gradient(90deg, #111 0 50%, #fff 50% 100%)' : 'none',
+                    WebkitBackgroundClip: uiHP === 5 ? 'text' : 'initial',
+                    backgroundClip: uiHP === 5 ? 'text' : 'initial',
+                    WebkitTextFillColor: uiHP === 5 ? 'transparent' : 'initial',
+                    textShadow: '0 1px 2px rgba(0,0,0,0.7)'
+                  }}>{uiHP}/{PLAYER_MAX_HP}</div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

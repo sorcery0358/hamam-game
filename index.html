@@ -128,6 +128,55 @@
       pointer-events: none;
     }
 
+    .enemyHitText {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 20;
+      font-size: 25px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      color: #48f126;
+      text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
+      animation: enemyHitFloat 0.8s ease-out forwards;
+      white-space: nowrap;
+    }
+
+    .enemyHitText.critical {
+      color: #22a8dd;
+      font-size: 40px;
+    }
+
+    .playerHitText {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 20;
+      font-size: 25px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      color: #ff5c5c;
+      text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
+      animation: enemyHitFloat 0.8s ease-out forwards;
+      white-space: nowrap;
+    }
+
+    @keyframes enemyHitFloat {
+      0% {
+        opacity: 0;
+        transform: translate(-50%, -10%) scale(0.75);
+      }
+
+      15% {
+        opacity: 1;
+      }
+
+      100% {
+        opacity: 0;
+        transform: translate(-50%, -85%) scale(1);
+      }
+    }
+
     /* ---------- FX ---------- */
     .fxLayer {
       position: absolute;
@@ -290,16 +339,19 @@
     /* HUD */
     .hud {
       position: absolute;
-      left: 12px;
-      bottom: 12px;
-      background: rgba(0, 0, 0, 0.8);
+      left: 46%;
+      top: 18px;
+      bottom: auto;
+      background: transparent;
       color: var(--ink);
-      padding: 10px 12px;
-      border-radius: 8px;
+      padding: 0;
+      border-radius: 0;
       font-size: 14px;
       line-height: 1.4;
       min-width: 220px;
-      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+      box-shadow: none;
+      backdrop-filter: none;
+      transform: translateX(-50%);
     }
 
     .hud .row {
