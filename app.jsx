@@ -69,6 +69,8 @@ function App() {
   const [showPauseMenu, setShowPauseMenu] = useState(false);
   const [resumingCount, setResumingCount] = useState(0);
   const [gameOver, setGameOver] = useState(false);
+  const resumingCountRef = useRef(resumingCount);
+  useEffect(() => { resumingCountRef.current = resumingCount; }, [resumingCount]);
   const musicVolRef = useRef(musicVol);
   const sfxVolRef = useRef(sfxVol);
 
@@ -1085,6 +1087,30 @@ function App() {
     npRef.current = key;
   }
 
+  function handlePauseRequest() {
+    if (resumingCountRef.current > 0) {
+      // cancel countdown and ensure pause menu is visible
+      cancelResumeCountdown();
+      setShowPauseMenu(true);
+      setPaused(true);
+      return;
+    }
+    // If currently paused, start resume countdown but keep `paused` true
+    // until the countdown finishes. If currently running, pause and show menu.
+    setPaused(prev => {
+      if (prev) {
+        // paused -> request resume: start countdown, keep paused true
+        initiateResume();
+        return true;
+      } else {
+        // running -> pause and show menu
+        try { arena.current.keys.clear(); } catch (e) { }
+        setShowPauseMenu(true);
+        return true;
+      }
+    });
+  }
+
   // ---------- arena keyboard ----------
   useEffect(() => {
     const a = arena.current;
@@ -1095,22 +1121,7 @@ function App() {
       const key = e.key.toLowerCase();
       // allow toggling pause with 'p' even when paused
       if (key === 'p') {
-        if (resumingCount > 0) {
-          cancelResumeCountdown();
-          return;
-        }
-        setPaused(prev => {
-          const next = !prev;
-          if (next) {
-            // pausing: clear inputs and stop movement, show menu
-            try { arena.current.keys.clear(); } catch (err) { }
-            setShowPauseMenu(true);
-          } else {
-            // initiate resume countdown
-            initiateResume();
-          }
-          return next;
-        });
+        handlePauseRequest();
         return;
       }
       if (paused) return;
@@ -1217,22 +1228,7 @@ function App() {
             <div className="row" style={{ marginTop: 6, justifyContent: 'flex-start' }}>
               <button
                 className="hudPauseButton"
-                onClick={() => {
-                  if (resumingCount > 0) {
-                    cancelResumeCountdown();
-                    return;
-                  }
-                  setPaused(prev => {
-                    const next = !prev;
-                    if (next) {
-                      try { arena.current.keys.clear(); } catch (e) { }
-                      setShowPauseMenu(true);
-                    } else {
-                      initiateResume();
-                    }
-                    return next;
-                  });
-                }}
+                onClick={handlePauseRequest}
               >
                 Pause
               </button>
