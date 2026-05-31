@@ -95,6 +95,7 @@ function App() {
   const playerHPRef = useRef(PLAYER_MAX_HP);
   const [uiHP, setUiHP] = useState(PLAYER_MAX_HP);
   const killCountRef = useRef(0);
+  const instantKillRef = useRef(0);
   const totalDamageDealtRef = useRef(0);
   const totalDamageTakenRef = useRef(0);
   const musicLockedOffRef = useRef(false);
@@ -399,40 +400,47 @@ function App() {
     // determine spawn coords: prefer provided coordinates, otherwise find a nearby allowed point
     function findSpawn(px, py) {
       if (typeof px === 'number' && typeof py === 'number' && canEnemySpawnAt(px, py)) return [px, py];
-      // try sampling random positions across the map, but keep a minimum distance from player
+      // try sampling random positions across the map, but keep a minimum distance from the current player position
       const MIN_SPAWN_DIST = 450;
+      const playerX = (arena && arena.current && typeof arena.current.x === 'number') ? arena.current.x : PLAYER_START_X;
+      const playerY = (arena && arena.current && typeof arena.current.y === 'number') ? arena.current.y : PLAYER_START_Y;
       for (let attempt = 0; attempt < 500; attempt++) {
         const sx = Math.floor(Math.random() * MAP_W);
         const sy = Math.floor(Math.random() * MAP_H);
-        if (Math.hypot(sx - PLAYER_START_X, sy - PLAYER_START_Y) < MIN_SPAWN_DIST) continue;
+        if (Math.hypot(sx - playerX, sy - playerY) < MIN_SPAWN_DIST) continue;
         if (sx >= 0 && sy >= 0 && sx < MAP_W && sy < MAP_H && canEnemySpawnAt(sx, sy)) return [sx, sy];
       }
       // fallback: random scan across the map
       for (let attempt = 0; attempt < 1000; attempt++) {
         const sx = Math.floor(Math.random() * MAP_W);
         const sy = Math.floor(Math.random() * MAP_H);
-        if (Math.hypot(sx - PLAYER_START_X, sy - PLAYER_START_Y) < 350) continue;
+        if (Math.hypot(sx - playerX, sy - playerY) < 350) continue;
         if (canEnemySpawnAt(sx, sy)) return [sx, sy];
       }
       return [PLAYER_START_X, PLAYER_START_Y];
     }
     const [spawnX, spawnY] = findSpawn(x, y);
+    const sc = 1.5;
     const enemy = {
       id,
       x: spawnX,
       y: spawnY,
       hp: ENEMY_MAX_HP,
       el,
-      nextAttack: 0,
+      // delay first attack briefly so spawn doesn't immediately hit player
+      nextAttack: performance.now() + 1000,
+      canAttack: false,
       speed: 120 + Math.random() * 40,
-      scale: 1.5,
+      scale: sc,
       // hitbox radius in pixels (in arena space)
-      hitbox: 60,
+      hitbox: Math.round(60 * sc),
       stuckFrames: 0,
       path: [],
       pathTargetKey: '',
       pathRecalcAt: 0,
     };
+    // enable attacking after a short grace period to avoid instant hits while appearing
+    setTimeout(() => { try { enemy.canAttack = true; } catch (e) { } }, 1000);
     enemiesRef.current.push(enemy);
     return enemy;
   }
@@ -466,7 +474,7 @@ function App() {
 
   function showEnemyHitText(enemy, text, critical = false) {
     if (!enemy) return;
-    showFloatingHitText(enemy.x, enemy.y - 220, text, `enemyHitText${critical ? ' critical' : ''}`);
+    showFloatingHitText(enemy.x, enemy.y - 320, text, `enemyHitText${critical ? ' critical' : ''}`);
   }
 
   function showPlayerHitText(text) {
@@ -488,6 +496,8 @@ function App() {
       const deathDur = (A.death && A.death.dur) || 1.5;
       enemy.hp = 0;
       enemy.action = { key: 'death', start: performance.now(), dur: deathDur, hold: true };
+      // prevent any further attacks from this enemy while dying
+      try { enemy.canAttack = false; enemy.nextAttack = Infinity; } catch (e) { }
       // schedule DOM removal after animation finishes
       setTimeout(() => {
         try { removeEnemy(enemy); } catch (e) { }
@@ -647,8 +657,13 @@ function App() {
     if (key === 'slap') {
       let played = false;
       for (const target of hits) {
-        if (Math.random() < 0.25) damageEnemy(target, target.hp, { critical: true, label: 'critical hit!' });
-        else damageEnemy(target, damages[key], { label: 'hit! x3' });
+        if (Math.random() < 0.25) {
+          // instant kill
+          instantKillRef.current = (instantKillRef.current || 0) + 1;
+          damageEnemy(target, target.hp, { critical: true, label: 'critical hit!' });
+        } else {
+          damageEnemy(target, damages[key], { label: 'hit! x3' });
+        }
         played = true;
       }
       if (played) {
@@ -829,7 +844,8 @@ function App() {
     }
     if (scaleEl) {
       const sgnX = flip ? -1 : 1;
-      scaleEl.style.transform = `translate(-50%,-100%) rotate(${pose.rot.toFixed(2)}deg) scale(${(pose.sx * sgnX).toFixed(3)},${pose.sy.toFixed(3)})`;
+      const sc = (enemy.scale || 1);
+      scaleEl.style.transform = `translate(-50%,-100%) rotate(${pose.rot.toFixed(2)}deg) scale(${(pose.sx * sgnX * sc).toFixed(3)},${(pose.sy * sc).toFixed(3)})`;
     }
     // position including pose offsets
     const baseX = enemy.x;
@@ -1006,8 +1022,10 @@ function App() {
           const hitTime = 0.45;
           if (!en.action.hitApplied && p >= hitTime) {
             en.action.hitApplied = true;
-            // enemy attack deals 1 damage
-            damagePlayer(1);
+            // Only deal damage for real attack actions (avoid dealing damage on death/other poses)
+            if (en.action.key === 'punch' || en.action.key === 'kick' || en.action.key === 'slap') {
+              damagePlayer(1);
+            }
           }
           continue;
         }
@@ -1069,8 +1087,8 @@ function App() {
           }
         }
       } else {
-        // in range to attack: queue attack action
-        if (performance.now() >= (en.nextAttack || 0)) {
+        // in range to attack: queue attack action (only if allowed)
+        if (en.canAttack && performance.now() >= (en.nextAttack || 0)) {
           en.nextAttack = performance.now() + 2000; // 2s enemy attack cd
           en.action = { key: 'punch', start: performance.now(), dur: A.punch.dur, hold: false, hitApplied: false };
           // pose will be applied by action handling next loop
@@ -1445,8 +1463,8 @@ function App() {
           <div className="hud">
 
             {/* Punch and Kick cooldowns hidden from HUD */}
-            <div className="row"><div className="label">Ottoman Slap</div><div className="val">{slapRem}s</div></div>
-            <div className="row"><div className="label">Sodalı Ayran</div><div className="val">{drinkRem}s</div></div>
+            <div className="row"><div className="label">Ottoman Slap Countdown</div><div className="val">{slapRem}s</div></div>
+            <div className="row"><div className="label">Sodalı Ayran Countdown</div><div className="val">{drinkRem}s</div></div>
             <div style={{ height: 6 }} />
             <div className="row"><div className="label">Metalheads Killed</div><div className="val">{uiKills}</div></div>
             <div className="row" style={{ alignItems: 'center' }}>
@@ -1506,13 +1524,15 @@ function App() {
                 position: 'absolute', right: '6%', top: '30%', width: 340, opacity: 0.95,
                 transform: 'rotate(10deg) translate(6px, -4px)', pointerEvents: 'none', zIndex: 1
               }} />
-              <div className="menuCard" style={{ position: 'relative', zIndex: 3 }}>
+              <div className="menuCard" style={{ position: 'relative', zIndex: 3, width: 760, maxWidth: '92%' }}>
                 <h1>GAME OVER!</h1>
                 <div className="menuDesc">Your run has ended.</div>
                 <div className="menuStats" style={{ margin: '18px 0 20px', textAlign: 'center', fontSize: 14, lineHeight: 1.7 }}>
                   <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 10 }}>Metalheads Killed: {uiKills}</div>
                   <div><strong>Total Damage Dealt:</strong> {totalDamageDealtRef.current}</div>
                   <div><strong>Total Damage Taken:</strong> {totalDamageTakenRef.current}</div>
+                  <div><strong>Instant Kills:</strong> {instantKillRef.current || 0}</div>
+                  <div style={{ marginTop: 8, fontSize: 18, fontWeight: 800 }}><strong>Score:</strong> {((killCountRef.current || 0) * 100) + ((totalDamageDealtRef.current || 0) * 10) - ((totalDamageTakenRef.current || 0) * 5) + ((instantKillRef.current || 0) * 50)}</div>
                 </div>
                 <button
                   className="startButton restartButton"
@@ -1534,7 +1554,7 @@ function App() {
                 position: 'absolute', left: '6%', top: '32%', width: 260, opacity: 0.95,
                 transform: 'rotate(-12deg) translate(-6px, -6px)', pointerEvents: 'none', zIndex: 1
               }} />
-              <div className="menuCard" style={{ position: 'relative', zIndex: 3 }}>
+              <div className="menuCard" style={{ position: 'relative', zIndex: 3, width: 760, maxWidth: '92%' }}>
                 <h1>Game Paused</h1>
                 <div className="menuControls">
                   <div className="menuRow">
@@ -1547,12 +1567,12 @@ function App() {
                   </div>
                 </div>
                 <div className="menuHelp">
-                  <div><strong>WASD</strong> - Move</div>
-                  <div><strong>J</strong> - Punch</div>
-                  <div><strong>K</strong> - Kick</div>
-                  <div><strong>L</strong> - Ottoman Slap</div>
-                  <div><strong>B</strong> - Drink Sodalı Ayran</div>
-                  <div><strong>P</strong> - Pause</div>
+                  <div><strong>WASD</strong> - Move <span style={{ marginLeft: 8, opacity: 0.9 }}>(Gamepad: Left stick)</span></div>
+                  <div><strong>J</strong> - Punch <span style={{ marginLeft: 8, opacity: 0.9 }}>(Gamepad: A)</span></div>
+                  <div><strong>K</strong> - Kick <span style={{ marginLeft: 8, opacity: 0.9 }}>(Gamepad: X)</span></div>
+                  <div><strong>L</strong> - Ottoman Slap <span style={{ marginLeft: 8, opacity: 0.9 }}>(Gamepad: Y)</span></div>
+                  <div><strong>B</strong> - Drink Sodalı Ayran <span style={{ marginLeft: 8, opacity: 0.9 }}>(Gamepad: B)</span></div>
+                  <div><strong>P</strong> - Pause <span style={{ marginLeft: 8, opacity: 0.9 }}>(Gamepad: Start / Back)</span></div>
                 </div>
                 <div className="menuDesc">Game paused. Resume to continue your run.</div>
                 <button
@@ -1593,7 +1613,7 @@ function App() {
                 transform: 'rotate(-12deg) translate(-6px, -6px)', pointerEvents: 'none', zIndex: 1
               }} />
 
-              <div className="menuCard" style={{ position: 'relative', zIndex: 3 }}>
+              <div className="menuCard" style={{ position: 'relative', zIndex: 3, width: 760, maxWidth: '92%' }}>
                 <h1>TELLAK<br />Hamam Brawler</h1>
                 <div className="menuControls">
                   <div className="menuRow">
@@ -1606,12 +1626,12 @@ function App() {
                   </div>
                 </div>
                 <div className="menuHelp">
-                  <div><strong>WASD</strong> - Move</div>
-                  <div><strong>J</strong> - Punch</div>
-                  <div><strong>K</strong> - Kick</div>
-                  <div><strong>L</strong> - Ottoman Slap</div>
-                  <div><strong>B</strong> - Drink Sodalı Ayran</div>
-                  <div><strong>P</strong> - Pause</div>
+                  <div><strong>WASD</strong> - Move <span style={{ marginLeft: 8, opacity: 0.9 }}>(Gamepad: Left stick)</span></div>
+                  <div><strong>J</strong> - Punch <span style={{ marginLeft: 8, opacity: 0.9 }}>(Gamepad: A)</span></div>
+                  <div><strong>K</strong> - Kick <span style={{ marginLeft: 8, opacity: 0.9 }}>(Gamepad: X)</span></div>
+                  <div><strong>L</strong> - Ottoman Slap <span style={{ marginLeft: 8, opacity: 0.9 }}>(Gamepad: Y)</span></div>
+                  <div><strong>B</strong> - Drink Sodalı Ayran <span style={{ marginLeft: 8, opacity: 0.9 }}>(Gamepad: B)</span></div>
+                  <div><strong>P</strong> - Pause <span style={{ marginLeft: 8, opacity: 0.9 }}>(Gamepad: Start / Back)</span></div>
                 </div>
                 <div className="menuDesc">Punch deals 1 damage with a 1s cooldown. Kick deals 2 damage with a 2s cooldown. Ottoman Slap deals 3 damage with a 10s cooldown, hits all enemies in range, and has a 25% chance to instantly kill. Drinking Sodalı Ayran fully restores HP and has a 30s cooldown.</div>
                 <button
