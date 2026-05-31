@@ -1,3 +1,7 @@
+### GitHub
+This project is currently a fully playable version. All core gameplay mechanics, enemy AI, animation synchronization, and audio systems are completely functional.The link for the live demo is provided below:
+# https://sorcery0358.github.io/tellak-hamam-brawler/
+
 <img width="300" height="300" alt="frame" src="https://github.com/user-attachments/assets/087ae8bc-7115-45ea-a25e-4633d7203b07" />
 
 # Tellak — Hamam Brawler
@@ -108,10 +112,6 @@ To prevent the high memory consumption associated with traditional sprite sheets
 * **Audio Asset Preloading:** Audio files are preloaded into memory all at once during the initial game loading phase; they are not dynamically cleared or re-uploaded during gameplay, thereby preventing disk I/O blocking.
 
 ## 5. Version Control & Workflow
-
-### GitHub
-This project is currently a fully playable version. All core gameplay mechanics, enemy AI, animation synchronization, and audio systems are completely functional.The link for the live demo is provided below:
-# https://sorcery0358.github.io/tellak-hamam-brawler/
 
 ### Integration Challenges & Solutions
 
