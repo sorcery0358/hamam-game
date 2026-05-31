@@ -22,16 +22,16 @@
 ## 1. Game Overview
 
 ### Elevator Pitch
-*Tellak — Hamam Brawler*, geleneksel Türk hamamı atmosferinde geçen, oyuncunun hamamı basan kötü adamları (külhanbeyleri/magandaları) Osmanlı tokadı ve tekmelerle saf dışı bıraktığı, canı azaldığında ise milli içeceğimiz **sodalı ayran** içerek enerjisini topladığı, modern web teknolojileriyle yazılmış dinamik bir 2D "top-down beat 'em up" aksiyon oyunudur.
+*Tellak — Hamam Brawler* is a dynamic 2D top-down beat 'em up action game built with modern web technologies. Set in a traditional Turkish bath atmosphere, players knock out rowdy troublemakers using Ottoman slaps and kicks, and recover their health by drinking Turkey’s national beverage, **sodalı ayran**, when their energy is low.
 
 ### Core Mechanics
-* **8-Yönlü Hareket (8-Way Movement):** Oyuncu `W`, `A`, `S`, `D` tuşlarını kullanarak hamam haritasında serbestçe hareket eder. Karakterin baktığı yön, farenin konumuna veya hareket vektörüne göre anlık güncellenir.
-* **Saldırı Komboları ve Yetenekler:**
-  * **Yumruk (Punch - `J`):** 1 hasar puanı verir, 1 saniye bekleme süresi (cooldown) vardır.
-  * **Tekme (Kick - `K`):** 2 hasar puanı verir, 2 saniye bekleme süresi vardır.
-  * **Osmanlı Tokadı (Ottoman Slap - `L`):** Alan hasarı (AoE) vurur, menzildeki tüm düşmanlara 3 hasar puanı verir. 10 saniye bekleme süresine sahiptir ve düşmanları **%25 ihtimalle tek vuruşta anında yok etme (Instakill)** şansına sahiptir.
-* **Can Yenileme (Sodalı Ayran - `B`):** Oyuncunun canı (`HP`) azaldığında sodalı ayran içerek can barını anında tamamen doldurur. Mekaniğin kötüye kullanımını engellemek amacıyla 30 saniyelik bir bekleme süresi bulunmaktadır.
-* **Zorluk Skalası (Dynamic Spawning):** Oyun ilerledikçe düşmanların geliş hızı ve dalga yoğunluğu artar. Oyuncu düşmanları temizledikçe skoru (`Kill Count`) ve toplam vurduğu hasar HUD üzerinden güncellenir.
+* **8-Way Movement:** The player moves freely across the bathhouse map using the `W`, `A`, `S`, and `D` keys. The character's facing direction updates instantly based on either the mouse position or the movement vector.
+* **Attack Combos and Abilities:**
+  * **Punch (`J`):** Deals 1 damage point and has a 1-second cooldown.
+  * **Kick (`K`):** Deals 2 damage points and has a 2-second cooldown.
+  * **Ottoman Slap (`L`):** Deals Area of Effect (AoE) damage, inflicting 3 damage points on all enemies within range. It has a 10-second cooldown and features a **25% chance for an instant kill (Instakill)**.
+* **Health Regeneration (Sodalı Ayran - `B`):** When the player’s health (`HP`) is low, drinking "sodalı ayran" instantly refills the health bar completely. To prevent abuse of this mechanic, it has a 30-second cooldown.
+* **Difficulty Scaling (Dynamic Spawning):** As the game progresses, the enemy spawn rate and wave intensity increase. As the player clears out enemies, their score (`Kill Count`) and total damage dealt are updated in real-time on the HUD.
 
 ### Win/Loss Conditions
 * **Win Condition (Kazanma Şartı):** Oyun sonsuz dalga (endless survival) modundadır; oyuncunun amacı hamamda hayatta kalabildiği kadar uzun süre kalıp maksimum külhanbeyini etkisiz hale getirerek en yüksek skora ulaşmaktır.
