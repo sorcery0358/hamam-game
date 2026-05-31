@@ -91,23 +91,15 @@ To prevent the high memory consumption associated with traditional sprite sheets
 
 ## 4. Optimization & Memory Management
 
-### Performance Bottlenecks (Performans Darboğazları ve Çözümler)
-* **HTML5 Canvas Redraw Optimizasyonu:** Her render karesinde tüm haritanın piksellerini sıfırdan hesaplamak yerine, arka plan görseli tarayıcı belleğinde önbelleğe alınır (`preload sprites`). Sadece değişen nesneler, bounding box alanları hesaplanarak transformasyon matrisleri (`ctx.translate`, `ctx.rotate`, `ctx.scale`) aracılığıyla GPU ivmeli olarak çizilir.
-* **Garbage Collection (Çöp Toplayıcı) Önlemleri:** Oyun döngüsü içerisinde sürekli yeni nesne (`{}`, `[]`) oluşturulması, JavaScript Garbage Collector'ı tetikleyerek mikrosaniyelik takılmalara (stuttering) yol açar. Bu projede, BFS algoritmasındaki `parents` ve `queue` yapıları oyunun başında **`Int32Array`** olarak tek seferde (allocation) rezerve edilmiştir ve döngü içinde yeniden yaratılmak yerine üzerlerine yazma (overwrite) yöntemi uygulanmıştır.
+### Performance Bottlenecks & Solutions
+* **HTML5 Canvas Redraw Optimization:** Instead of recalculating the entire map's pixels from scratch during every render frame, the background image is cached in the browser memory (`preload sprites`). Only the dynamic objects are rendered using GPU-accelerated transformation matrices (`ctx.translate`, `ctx.rotate`, `ctx.scale`) based on their calculated bounding box areas.
+* **Garbage Collection Mitigation:** Continuously creating new objects (`{}`, `[]`) within the game loop triggers the JavaScript Garbage Collector, leading to micro-stuttering. In this project, the `parents` and `queue` structures utilized in the BFS algorithm are allocated only once as an **`Int32Array`** at game initialization. Instead of being recreated within the loop, these structures are optimized using an overwrite approach.
 
-### Memory Management (Bellek Yönetimi)
-* **32-Bit Smart Asset Pipeline:** Oyunda kullanılan tüm görsel asset'ler (`tellak_front`, `tellak_back`, `enemy_front`, `enemy_back`, `map`) yapay zeka entegrasyonuyla özgün olarak hamam temasına uygun üretilmiş, **32-bit derinlik (bit depth)** formatında optimize edilerek şeffaflık (Alpha kanalı) ve renk kalitesinden ödün vermeden belleğe enjekte edilmiştir.
-* **Audio Asset Lazy Loading:** Ses dosyaları oyun yüklenirken tek bir seferde ön belleğe alınır, oyun esnasında dinamik olarak bellekten kaldırılıp tekrar yüklenmez, böylece disk I/O bloklamaları engellenir.
-
----
+### Memory Management
+* **Smart Asset Pipeline:** All visual assets used in the game (`tellak_front`, `tellak_back`, `enemy_front`, `enemy_back`, `map`) were uniquely generated using AI integration to fit the bathhouse theme and injected into memory without compromising visual quality.
+* **Audio Asset Preloading:** Audio files are preloaded into memory all at once during the initial game loading phase; they are not dynamically cleared or re-uploaded during gameplay, thereby preventing disk I/O blocking.
 
 ## 5. Version Control & Workflow
-
-### Git Strategy
-Proje geliştirme sürecinde **Feature Branch Workflow (Özellik Dalı İş Akışı)** stratejisi benimsenmiştir.
-* `main` branch'i her zaman çalışan, hatasız ve stabil oyun sürümünü barındırmıştır.
-* Her bir modül için ayrı branch'ler açılmıştır. Örnek: `feature/animation-engine`, `feature/ai-pathfinding`, `feature/audio-pipeline`.
-* Geliştirilen özellikler lokalde test edildikten sonra `Pull Request (PR)` açılarak kod gözden geçirme (Code Review) sonrası ana branch'e entegre edilmiştir.
 
 ### Integration Challenges (Entegrasyon Zorlukları ve Çözümler)
 En büyük entegrasyon zorluğu, `anim.js` içerisindeki prosedürel animasyon fazları ile `app.jsx` içerisindeki karakterlerin fiziksel koordinatlarının ve can azaltma tetikleyicilerinin senkronize edilmesi sırasında yaşanmıştır. 
