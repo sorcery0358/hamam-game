@@ -87,74 +87,7 @@ function App() {
     layer: useRef(), spark: useRef(), streak: useRef(), dust: useRef(), stars: useRef(),
     glass: useRef(), liquid: useRef(), foam: useRef(), sweat: useRef(), slap: useRef(), burst: useRef(),
   };
-  // mobile controls refs/state
-  const [showMobileControls, setShowMobileControls] = useState(false);
-  const joystickRef = useRef(null);
-  const joystickKnobRef = useRef(null);
-  const joystickPointerId = useRef(null);
-  const joystickCenter = useRef({ x: 0, y: 0 });
-  const joystickDeadzone = 0.2;
-  const joystickActiveRef = useRef(false);
 
-  function updateJoystickFromPoint(clientX, clientY) {
-    const jc = joystickCenter.current;
-    const dx = clientX - jc.x;
-    const dy = clientY - jc.y;
-    const r = Math.max(48, 64); // nominal joystick radius in px
-    const nx = Math.max(-1, Math.min(1, dx / r));
-    const ny = Math.max(-1, Math.min(1, dy / r));
-    // map to arena keys (ny: -1 up, +1 down)
-    try { arena.current.keys.clear(); } catch (e) { arena.current.keys = new Set(); }
-    if (nx < -joystickDeadzone) arena.current.keys.add('a');
-    else if (nx > joystickDeadzone) arena.current.keys.add('d');
-    if (ny < -joystickDeadzone) arena.current.keys.add('w');
-    else if (ny > joystickDeadzone) arena.current.keys.add('s');
-    // visual knob movement
-    try {
-      if (joystickKnobRef.current) {
-        const kx = Math.max(-r, Math.min(r, dx));
-        const ky = Math.max(-r, Math.min(r, dy));
-        joystickKnobRef.current.style.transform = `translate(${kx}px, ${ky}px)`;
-      }
-    } catch (e) { }
-  }
-
-  function onJoystickPointerDown(e) {
-    if (!joystickRef.current) return;
-    joystickPointerId.current = e.pointerId;
-    try { joystickRef.current.setPointerCapture(e.pointerId); } catch (ex) { }
-    const rect = joystickRef.current.getBoundingClientRect();
-    joystickCenter.current = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-    joystickActiveRef.current = true;
-    updateJoystickFromPoint(e.clientX, e.clientY);
-    e.preventDefault(); e.stopPropagation();
-  }
-
-  function onJoystickPointerMove(e) {
-    if (!joystickActiveRef.current) return;
-    if (joystickPointerId.current != null && e.pointerId !== joystickPointerId.current) return;
-    updateJoystickFromPoint(e.clientX, e.clientY);
-    e.preventDefault(); e.stopPropagation();
-  }
-
-  function onJoystickPointerUp(e) {
-    if (joystickPointerId.current != null && e.pointerId !== joystickPointerId.current) return;
-    joystickPointerId.current = null;
-    joystickActiveRef.current = false;
-    try { arena.current.keys.clear(); } catch (ex) { arena.current.keys = new Set(); }
-    try { if (joystickKnobRef.current) joystickKnobRef.current.style.transform = `translate(0px, 0px)`; } catch (ex) { }
-    try { if (joystickRef.current) joystickRef.current.releasePointerCapture && joystickRef.current.releasePointerCapture(e.pointerId); } catch (ex) { }
-    e.preventDefault(); e.stopPropagation();
-  }
-
-  function mobileAction(actionKey) {
-    if (!isOffCooldown(actionKey)) return;
-    if (actionKey === 'drink') {
-      const a = arena.current;
-      if (!a || !canDrinkAt(a.x, a.y)) return;
-    }
-    startAction(actionKey, false);
-  }
   const sounds = useRef({});
   const zoneMask = useRef({ ready: false, w: MAP_W, h: MAP_H, cells: null });
   const navGrid = useRef({ ready: false, w: 0, h: 0, cellSize: NAV_CELL_SIZE, cells: null });
@@ -944,16 +877,7 @@ function App() {
     // eslint-disable-next-line
   }, []);
 
-  // detect touch-capable device to show mobile controls
-  useEffect(() => {
-    // enable mobile controls only on touch-capable devices
-    try {
-      const touchy = (typeof window !== 'undefined') && ('ontouchstart' in window || (navigator && navigator.maxTouchPoints > 0));
-      setShowMobileControls(!!touchy);
-    } catch (e) {
-      setShowMobileControls(false);
-    }
-  }, []);
+
   useEffect(() => {
     let raf;
     const onResize = () => updateWorldLayout();
@@ -1483,25 +1407,6 @@ function App() {
 
         // volume adjustments while held
         const nowSec = performance.now() / 1000;
-        // LB (4) increases music, LT (6) decreases music
-        if (gp.buttons[4] && gp.buttons[4].pressed) {
-          const next = Math.max(0, Math.min(1, (musicVolRef.current || 0) + volRate * (1 / 60)));
-          setMusicVol(next); syncAudioVolumes(next, sfxVolRef.current);
-        }
-        if (gp.buttons[6] && gp.buttons[6].value > 0.2) {
-          const next = Math.max(0, Math.min(1, (musicVolRef.current || 0) - volRate * gp.buttons[6].value * (1 / 60)));
-          setMusicVol(next); syncAudioVolumes(next, sfxVolRef.current);
-        }
-        // RB (5) increases sfx, RT (7) decreases sfx
-        if (gp.buttons[5] && gp.buttons[5].pressed) {
-          const next = Math.max(0, Math.min(1, (sfxVolRef.current || 0) + volRate * (1 / 60)));
-          setSfxVol(next); syncAudioVolumes(musicVolRef.current, next);
-        }
-        if (gp.buttons[7] && gp.buttons[7].value > 0.2) {
-          const next = Math.max(0, Math.min(1, (sfxVolRef.current || 0) - volRate * gp.buttons[7].value * (1 / 60)));
-          setSfxVol(next); syncAudioVolumes(musicVolRef.current, next);
-        }
-
         prevButtons = buttons;
       }
       rafId = requestAnimationFrame(poll);
@@ -1538,17 +1443,12 @@ function App() {
             </div>
           </div>
           <div className="hud">
-            <div className="row"><div className="label">Music</div>
-              <div className="val"><input type="range" min="0" max="1" step="0.01" value={musicVol} onInput={e => { const v = parseFloat(e.target.value); setMusicVol(v); syncAudioVolumes(v, sfxVolRef.current); }} onChange={e => { const v = parseFloat(e.target.value); setMusicVol(v); syncAudioVolumes(v, sfxVolRef.current); }} /></div>
-            </div>
-            <div className="row"><div className="label">SFX</div>
-              <div className="val"><input type="range" min="0" max="1" step="0.01" value={sfxVol} onInput={e => { const v = parseFloat(e.target.value); setSfxVol(v); syncAudioVolumes(musicVolRef.current, v); }} onChange={e => { const v = parseFloat(e.target.value); setSfxVol(v); syncAudioVolumes(musicVolRef.current, v); }} /></div>
-            </div>
+
             {/* Punch and Kick cooldowns hidden from HUD */}
             <div className="row"><div className="label">Ottoman Slap</div><div className="val">{slapRem}s</div></div>
             <div className="row"><div className="label">Sodalı Ayran</div><div className="val">{drinkRem}s</div></div>
             <div style={{ height: 6 }} />
-            <div className="row"><div className="label">Kills</div><div className="val">{uiKills}</div></div>
+            <div className="row"><div className="label">Metalheads Killed</div><div className="val">{uiKills}</div></div>
             <div className="row" style={{ alignItems: 'center' }}>
               <div className="label">HP</div>
               <div className="val" style={{ flex: 1 }}>
@@ -1586,27 +1486,31 @@ function App() {
                 </div>
               </div>
             </div>
-            <div className="row" style={{ marginTop: 6, justifyContent: 'flex-start' }}>
+            <div className="row" style={{ marginTop: 6, justifyContent: 'flex-start', alignItems: 'center' }}>
               <button
                 className="hudPauseButton"
                 onClick={handlePauseRequest}
               >
                 Pause
               </button>
+              {resumingCount > 0 && (
+                <div style={{ marginLeft: 12, fontSize: 13, opacity: 0.95, fontWeight: 700 }}>
+                  Resuming in {resumingCount}...
+                </div>
+              )}
             </div>
-            {resumingCount > 0 && (
-              <div style={{ textAlign: 'left', marginTop: 6, fontSize: 13, opacity: 0.95 }}>
-                Resuming..{resumingCount}
-              </div>
-            )}
           </div>
           {gameStarted && gameOver && (
             <div className="mainMenu">
-              <div className="menuCard">
+              <img src="sprites/enemy_front.png" alt="enemy" style={{
+                position: 'absolute', right: '6%', top: '30%', width: 340, opacity: 0.95,
+                transform: 'rotate(10deg) translate(6px, -4px)', pointerEvents: 'none', zIndex: 1
+              }} />
+              <div className="menuCard" style={{ position: 'relative', zIndex: 3 }}>
                 <h1>GAME OVER!</h1>
                 <div className="menuDesc">Your run has ended.</div>
                 <div className="menuStats" style={{ margin: '18px 0 20px', textAlign: 'center', fontSize: 14, lineHeight: 1.7 }}>
-                  <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 10 }}>Kills: {uiKills}</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 10 }}>Metalheads Killed: {uiKills}</div>
                   <div><strong>Total Damage Dealt:</strong> {totalDamageDealtRef.current}</div>
                   <div><strong>Total Damage Taken:</strong> {totalDamageTakenRef.current}</div>
                 </div>
@@ -1626,7 +1530,11 @@ function App() {
           )}
           {gameStarted && !gameOver && paused && showPauseMenu && (
             <div className="mainMenu">
-              <div className="menuCard">
+              <img src="sprites/tellak_front.png" alt="tellak" style={{
+                position: 'absolute', left: '6%', top: '32%', width: 260, opacity: 0.95,
+                transform: 'rotate(-12deg) translate(-6px, -6px)', pointerEvents: 'none', zIndex: 1
+              }} />
+              <div className="menuCard" style={{ position: 'relative', zIndex: 3 }}>
                 <h1>Game Paused</h1>
                 <div className="menuControls">
                   <div className="menuRow">
@@ -1675,7 +1583,17 @@ function App() {
           )}
           {!gameStarted && (
             <div className="mainMenu">
-              <div className="menuCard">
+              {/* Decorative sprites behind the menu (blurred, slightly diagonal) */}
+              <img src="sprites/enemy_front.png" alt="enemy" style={{
+                position: 'absolute', left: '6%', top: '28%', width: 300, opacity: 0.9,
+                transform: 'rotate(10deg) translate(6px, -4px)', pointerEvents: 'none', zIndex: 1
+              }} />
+              <img src="sprites/tellak_front.png" alt="tellak" style={{
+                position: 'absolute', right: '6%', top: '26%', width: 260, opacity: 0.85,
+                transform: 'rotate(-12deg) translate(-6px, -6px)', pointerEvents: 'none', zIndex: 1
+              }} />
+
+              <div className="menuCard" style={{ position: 'relative', zIndex: 3 }}>
                 <h1>TELLAK<br />Hamam Brawler</h1>
                 <div className="menuControls">
                   <div className="menuRow">
@@ -1711,37 +1629,7 @@ function App() {
               </div>
             </div>
           )}
-          {/* Mobile controls (visible only on touch devices) */}
-          {showMobileControls && gameStarted && !paused && !gameOver && (
-            <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none' }}>
-              <div
-                ref={joystickRef}
-                onPointerDown={onJoystickPointerDown}
-                onPointerMove={onJoystickPointerMove}
-                onPointerUp={onJoystickPointerUp}
-                onPointerCancel={onJoystickPointerUp}
-                style={{
-                  position: 'absolute', left: 18, bottom: 18,
-                  width: 128, height: 128, borderRadius: 999, background: 'rgba(0,0,0,0.36)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'auto', touchAction: 'none', boxShadow: '0 6px 18px rgba(0,0,0,0.4)'
-                }}
-              >
-                <div ref={joystickKnobRef} style={{ width: 64, height: 64, borderRadius: 999, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: 'inset 0 2px 6px rgba(0,0,0,0.25)' }} />
-              </div>
-              <div style={{ position: 'absolute', right: 18, bottom: 18, width: 220, height: 220, pointerEvents: 'auto' }}>
-                <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-                  {/* Top - Slap (Y) */}
-                  <button onPointerDown={e => { e.stopPropagation(); e.preventDefault(); mobileAction('slap'); }} style={{ position: 'absolute', left: '50%', top: 12, transform: 'translateX(-50%)', width: 72, height: 72, borderRadius: 999, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(0,0,0,0.12)', fontWeight: 700 }}>Slap</button>
-                  {/* Left - Kick (X) */}
-                  <button onPointerDown={e => { e.stopPropagation(); e.preventDefault(); mobileAction('kick'); }} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', width: 72, height: 72, borderRadius: 999, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(0,0,0,0.12)', fontWeight: 700 }}>Kick</button>
-                  {/* Right - Drink (B) */}
-                  <button onPointerDown={e => { e.stopPropagation(); e.preventDefault(); mobileAction('drink'); }} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', width: 72, height: 72, borderRadius: 999, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(0,0,0,0.12)', fontWeight: 700 }}>Drink</button>
-                  {/* Bottom - Punch (A) */}
-                  <button onPointerDown={e => { e.stopPropagation(); e.preventDefault(); mobileAction('punch'); }} style={{ position: 'absolute', left: '50%', bottom: 12, transform: 'translateX(-50%)', width: 72, height: 72, borderRadius: 999, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(0,0,0,0.12)', fontWeight: 700 }}>Punch</button>
-                </div>
-              </div>
-            </div>
-          )}
+
         </div>
       </div>
     </React.Fragment>
