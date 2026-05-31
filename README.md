@@ -15,7 +15,7 @@
 * **Core Loop & State Engine Architecture:** Lead Game Programmer (Game Loop, React Architecture & Audio Pipelines)
 * **Procedural Animation & Mathematics:** Engine Programmer (Pure functional animation mechanics, trigonometry, and Easing layers)
 * **Algorithmic Pathfinding & Navigation Physics:** AI Specialist (BFS/NavGrid implementation and canvas-based spatial masking)
-* **UI/UX & Asset Pipelines:** Audio & Asset Integrator (AI-assisted 32-bit sprite asset design, sound layout management, and UI reactivity)
+* **UI/UX & Asset Pipelines:** Audio & Asset Integrator (AI-assisted sprite asset design, sound layout management, and UI reactivity)
 
 ---
 
@@ -101,8 +101,27 @@ To prevent the high memory consumption associated with traditional sprite sheets
 
 ## 5. Version Control & Workflow
 
-### Integration Challenges (Entegrasyon Zorlukları ve Çözümler)
-En büyük entegrasyon zorluğu, `anim.js` içerisindeki prosedürel animasyon fazları ile `app.jsx` içerisindeki karakterlerin fiziksel koordinatlarının ve can azaltma tetikleyicilerinin senkronize edilmesi sırasında yaşanmıştır. 
+### Integration Challenges & Solutions
 
-* **Teknik Problem:** Animasyon kodları asenkron çalışırken, darbe anı (örneğin Osmanlı Tokadı'nın tam temas ettiği an, $p = 0.42$) yakalanamıyor, hasar çok erken veya çok geç işleniyordu.
-* **Çözüm:** Animasyon yapısına özel bir `fx` tetikleme katmanı eklendi. `anim.js` içerisindeki saf fonksiyonlar, darbe anına ulaştığında Canvas döngüsüne özel bir bayrak (flag) fırlatır (`ko: 1`, `dust: 1`). `app.jsx` içindeki döngü bu bayrağı yakaladığı anda düşman dizisini (`enemiesRef.current`) tarayarak mesafe kontrolü yapar ve hasar algoritmasını (`damageGiven`) tam doğru karede tetikler. Bu sayede görsel bütünlük ve oyun hissiyatı (game feel) kusursuz hale getirilmiştir.
+* **Animation Synchronization:** Due to the asynchronous nature of the animation system, precisely capturing the exact moment of impact (for example, the precise instant the Ottoman Slap connects at phase $p = 0.45$) proved difficult, causing the damage registration to fall out of sync with the visual animation. Damage was either being processed too early while the animation was still in its wind-up phase, or too late after it had already passed the recovery phase. This misalignment created a weak and inconsistent game feel.
+  * **Solution:** A phase-based flag mechanism was integrated into the `requestAnimationFrame` loop. A specific critical timestamp (`hitTime = 0.45`) was defined for each individual action (punch, kick, slap). Inside the `runArena` function, when the animation phase reaches this threshold, the `hitApplied` flag is verified to ensure that damage is inflicted exactly once. Simultaneously, the `processActionHit` function executes the following logic:
+    * Scans the enemy array (`enemiesRef.current`).
+    * Validates the strike range by performing a distance check ($d \le \text{effRange}$).
+    * Triggers the `damageEnemy()` function on the correct frame (inflicting distinct damage points based on the strike type: Punch = 1, Kick = 2, Slap = 3).
+  
+  This architecture synchronizes the animation and damage mechanics through a data-driven event flag system, making it resilient to frame rate variations. Consequently, visual consistency and game feel have been seamlessly optimized.
+
+* **React State Closure Issue (Stale Closure):** The `requestAnimationFrame` loop requires continuous access to React state values (such as music volume, SFX volume, and overall game state); however, due to JavaScript closure mechanics, these state values often became stale inside the loop. For instance, when the `musicVol` state was updated, the already-running `frame()` function would continue to read and apply the outdated value.
+  * **Solution:** All critical state variables (`musicVol`, `sfxVol`, `resumingCount`) were mirrored using `useRef`. Simultaneously, a `useEffect` hook was implemented to synchronize these ref values upon every state update (e.g., `useEffect(() => { musicVolRef.current = musicVol; }, [musicVol])`). This architectural pattern guarantees that the `runArena()` loop always evaluates the most up-to-date values in real-time.
+
+* **Enemy Pathfinding Squeeze (Enemy Stuck in Corners):** The BFS algorithm occasionally caused enemies (magandas) to get trapped in tight corners of the maze-like bathhouse map. Even though recalculations were triggered when an enemy reached the same coordinate, the algorithm failed to find alternative paths, leaving the enemy immobilized.
+  * **Solution:** A two-tier fallback mechanism was deployed. First, the `getEnemyPath()` function caches pathfinding results for a duration of 350ms. If an enemy remains stationary, a `stuckFrames` counter increments, applying a pathing penalty (`stuckPenalty`) that forces the algorithm to prioritize alternative routes. As a final resort, the `pickEnemyChaseStep()` function evaluates up to 15 different directional angle offsets to find an alternate escape route (`angleOffsets = [0, 18, -18, 36, -36, ...]`).
+
+* **Pause/Resume State Synchronization:** Managing state transitions when the player toggled the Pause menu introduced complex synchronization issues. During the resume sequence, a countdown (`resumingCount`) would trigger, yet enemies would occasionally continue moving or audio components failed to pause correctly.
+  * **Solution:** An explicit state machine was established, synchronizing the `resumingCountRef` with the `resumingCount` useState hook. When a pause request is received while a countdown is already active, it is immediately aborted via `cancelResumeCountdown()`; otherwise, a new countdown is initiated. A `useEffect` hook monitors the `[gameStarted, paused, resumingCount]` dependencies to ensure all audio sources are instantly paused or resumed in perfect sync.
+
+* **Gamepad Input Bounce Debouncing:** Gamepad inputs—specifically the Start button and D-pad directional keys—frequently triggered rapid, unintended double-registrations (the bounce problem). This caused the menu navigation to skip target selections or caused the game to abruptly pause and unpause.
+  * **Solution:** A **220ms debounce** threshold was implemented for all pause toggles utilizing a `lastPauseToggleRef`. Any incoming toggle request is processed only if at least 220ms have elapsed since the prior toggle; otherwise, it is discarded. Similarly, for menu navigation (up/down), a `prevDpad` state is maintained to process inputs strictly on an **edge trigger** basis: `upEdge = upBtn && !prevDpad.up`.
+
+* **DOM Updates vs. Game Loop Timing:** The rendering of enemy DOM elements (`el.style.transform`) occasionally fell out of sync with the underlying physics and animation coordinate updates. If `applyPoseToEnemy()` failed to execute a position update during a frame, the obsolete transform calculation remained visible on screen.
+  * **Solution:** The system now guarantees that either `applyPoseToEnemy()` or a direct `el.style.transform` update is enforced during every single frame. If an enemy is not actively performing an action (i.e., in an idle or walk state), the positional coordinates are explicitly forced via a fallback string: `en.el.style.transform = en.el.style.transform || \`translate3d(${en.x}px,${en.y}px,0)\``. This safety fallback ensures that moving entities never suffer from visual positioning discrepancies.
