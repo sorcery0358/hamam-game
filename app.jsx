@@ -6,6 +6,11 @@ const MAP_H = 1536;
 // Entrance door spawn (fixed)
 const PLAYER_START_X = Math.round(MAP_W * 0.40);
 const PLAYER_START_Y = Math.round(MAP_H * 0.50);
+const DOORWAY_SPRITES = [
+  { id: 'doorway_right', src: 'sprites/doorway_right.png', x: 1568, y: 868 },
+  { id: 'doorway_left', src: 'sprites/doorway_left.png', x: 965, y: 868 },
+  { id: 'doorway_bottom', src: 'sprites/doorway_bottom.png', x: 1267, y: 974 },
+];
 const ZONE_GREEN = [126, 196, 0];
 const ZONE_PINK = [207, 18, 120];
 const ZONE_TOL = 70;
@@ -420,7 +425,7 @@ function App() {
       return [PLAYER_START_X, PLAYER_START_Y];
     }
     const [spawnX, spawnY] = findSpawn(x, y);
-    const sc = 1.5;
+    const sc = 1.25;
     const enemy = {
       id,
       x: spawnX,
@@ -1458,6 +1463,25 @@ function App() {
                   pointerEvents: 'none', textShadow: '0 1px 3px rgba(0,0,0,0.85)'
                 }}>drink to heal.</div>
               )}
+            </div>
+            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 100000 }}>
+              {DOORWAY_SPRITES.map(sprite => (
+                <img
+                  key={sprite.id}
+                  src={sprite.src}
+                  alt={sprite.id.replace('_', ' ')}
+                  draggable="false"
+                  style={{
+                    position: 'absolute',
+                    left: sprite.x,
+                    top: sprite.y,
+                    transform: 'translate(-50%, -100%)',
+                    zIndex: 100000,
+                    pointerEvents: 'none',
+                    userSelect: 'none',
+                  }}
+                />
+              ))}
             </div>
           </div>
           <div className="hud">
