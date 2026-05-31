@@ -1,6 +1,11 @@
 const { useState, useRef, useEffect } = React;
 const { A, DIRS, clamp, dirFromVec } = window.TELLAK;
 
+const MAP_W = 2754;
+const MAP_H = 1536;
+const PLAYER_START_X = MAP_W * 0.76;
+const PLAYER_START_Y = MAP_H * 0.62;
+
 // body metrics relative to feet point (px, up = negative)
 const CHEST = -152, HEAD = -202, MOUTH = -184, HAND = -116;
 
@@ -60,13 +65,31 @@ function App() {
     glass: useRef(), liquid: useRef(), foam: useRef(), sweat: useRef(), slap: useRef(), burst: useRef(),
   };
 
+  function updateWorldLayout() {
+    const stage = stageRef.current;
+    const world = worldRef.current;
+    if (!stage || !world) return;
+
+    const stageW = stage.clientWidth || window.innerWidth;
+    const stageH = stage.clientHeight || window.innerHeight;
+    const scale = Math.min(stageW / MAP_W, stageH / MAP_H);
+    const drawW = MAP_W * scale;
+    const drawH = MAP_H * scale;
+    const offsetX = (stageW - drawW) / 2;
+    const offsetY = (stageH - drawH) / 2;
+
+    world.style.width = MAP_W + 'px';
+    world.style.height = MAP_H + 'px';
+    world.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+  }
+
   // config mirror for the rAF loop (avoids stale closures)
   const cfg = useRef({ speed });
   cfg.current = { speed };
 
   // arena state
   const arena = useRef({
-    x: 0, y: 0, facing: 'S', keys: new Set(),
+    x: PLAYER_START_X, y: PLAYER_START_Y, facing: 'S', keys: new Set(),
     action: null, // {key, start, dur, hold}
     walkStart: performance.now(), moving: false,
   });
@@ -185,10 +208,12 @@ function App() {
   // ---------- main rAF loop ----------
   useEffect(() => {
     let raf;
-    const W0 = () => worldRef.current ? worldRef.current.clientWidth : 800;
-    const H0 = () => worldRef.current ? worldRef.current.clientHeight : 540;
-    // init arena pos
-    arena.current.x = W0() / 2; arena.current.y = H0() * 0.62;
+    const onResize = () => updateWorldLayout();
+    updateWorldLayout();
+    if (arena.current.x === 0 && arena.current.y === 0) {
+      arena.current.x = PLAYER_START_X;
+      arena.current.y = PLAYER_START_Y;
+    }
 
     let last = performance.now();
     function frame(now) {
@@ -198,14 +223,18 @@ function App() {
       raf = requestAnimationFrame(frame);
     }
     raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
+    window.addEventListener('resize', onResize);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', onResize);
+    };
     // eslint-disable-next-line
   }, []);
 
   // ---------- arena controller ----------
   function runArena(now, dt, c) {
     const a = arena.current;
-    const W = worldRef.current.clientWidth, H = worldRef.current.clientHeight;
+    const W = MAP_W, H = MAP_H;
     // active action?
     if (a.action) {
       const meta = A[a.action.key];
@@ -225,8 +254,8 @@ function App() {
     if (mx || my) {
       const len = Math.hypot(mx, my); mx /= len; my /= len;
       const spd = 190 * c.speed;
-      a.x = clamp(a.x + mx * spd * dt, 70, W - 70);
-      a.y = clamp(a.y + my * spd * dt, 120, H - 36);
+      a.x = clamp(a.x + mx * spd * dt, 140, W - 140);
+      a.y = clamp(a.y + my * spd * dt, 320, H - 40);
       a.facing = dirFromVec(mx, my);
       if (!a.moving) { a.moving = true; a.walkStart = now; }
       const e = (now - a.walkStart) / 1000 * c.speed;
@@ -278,8 +307,9 @@ function App() {
   return (
     <React.Fragment>
       <div className="stagewrap">
-        <div className="stage arena" ref={stageRef}>
+        <div className="stage" ref={stageRef}>
           <div className="world" ref={worldRef}>
+            <img className="map" src="sprites/map.png" alt="hamam map" draggable="false" />
             <div className="shadow" ref={shadowRef} />
             <div className="charAnchor" ref={anchorRef}>
               <div className="charScale" ref={scaleRef}>

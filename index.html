@@ -14,7 +14,7 @@
       --ink: #ece6d6;
       --brass: #d9a441;
       --brass-d: #a87c2b;
-      --char-h: 248px;
+      --char-h: 309px;
     }
 
     * {
@@ -59,30 +59,27 @@
       overflow: hidden;
       border: 0;
       box-shadow: none;
-    }
-
-    /* hamam marble arena */
-    .stage.arena {
-      background: #cdd6d2;
-      background-image:
-        radial-gradient(circle at 50% 50%, rgba(0, 0, 0, .04) 0 2px, transparent 3px),
-        repeating-linear-gradient(45deg, rgba(67, 163, 156, .10) 0 2px, transparent 2px 26px),
-        repeating-linear-gradient(-45deg, rgba(67, 163, 156, .10) 0 2px, transparent 2px 26px),
-        linear-gradient(180deg, #d8e0dc, #bcc8c2);
-      background-size: auto, 36px 36px, 36px 36px, auto;
-    }
-
-    .stage.arena::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      background: radial-gradient(80% 90% at 50% 40%, transparent 40%, rgba(8, 20, 18, .45) 100%);
-      pointer-events: none;
+      background: #000;
     }
 
     .world {
       position: absolute;
-      inset: 0;
+      left: 0;
+      top: 0;
+      transform-origin: 0 0;
+      will-change: transform;
+    }
+
+    .map {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      user-select: none;
+      -webkit-user-drag: none;
+      pointer-events: none;
     }
 
     .shadow {
