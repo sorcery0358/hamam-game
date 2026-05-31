@@ -63,6 +63,7 @@ function App() {
   const [speed, setSpeed] = useState(1);
   const [musicVol, setMusicVol] = useState(0.6);
   const [sfxVol, setSfxVol] = useState(0.9);
+  const [gameStarted, setGameStarted] = useState(false);
   const musicVolRef = useRef(musicVol);
   const sfxVolRef = useRef(sfxVol);
 
@@ -85,6 +86,7 @@ function App() {
   const playerHPRef = useRef(PLAYER_MAX_HP);
   const [uiHP, setUiHP] = useState(PLAYER_MAX_HP);
   const killCountRef = useRef(0);
+  const musicLockedOffRef = useRef(false);
   const [uiKills, setUiKills] = useState(0);
   const cooldownsRef = useRef({ punch: 0, kick: 0, slap: 0, drink: 0 });
   const enemiesRef = useRef([]);
@@ -97,10 +99,25 @@ function App() {
     sfxVolRef.current = nextSfxVol;
     const s = sounds.current;
     if (s.background) s.background.volume = nextMusicVol;
-    ['enemyDeath', 'damageTaken', 'damageGiven', 'drinking', 'endOfGame'].forEach(key => {
+    if (s.endOfGame) s.endOfGame.volume = nextMusicVol;
+    ['enemyDeath', 'damageTaken', 'damageGiven', 'drinking'].forEach(key => {
       if (s[key]) s[key].volume = nextSfxVol;
     });
   }
+
+  function playBackgroundMusic() {
+    const bg = sounds.current.background;
+    if (!bg || musicLockedOffRef.current) return;
+    try { bg.volume = musicVolRef.current; if (!bg.paused) return; bg.play().catch(() => { }); } catch (e) { }
+  }
+
+  function stopBackgroundMusic() {
+    const bg = sounds.current.background;
+    if (!bg) return;
+    try { bg.pause(); bg.currentTime = 0; } catch (e) { }
+  }
+
+  // background music removed — no ensureBackgroundMusic/stopBackgroundMusic
 
   function updateWorldLayout() {
     const stage = stageRef.current;
@@ -470,12 +487,13 @@ function App() {
     try { if (sounds.current.damageTaken) { sounds.current.damageTaken.volume = sfxVolRef.current; sounds.current.damageTaken.currentTime = 0; sounds.current.damageTaken.play(); } } catch (e) { }
     if (playerHPRef.current <= 0) {
       // death: trigger death action
+      musicLockedOffRef.current = true;
       arena.current.dead = true;
       arena.current.keys.clear();
       arena.current.action = { key: 'death', start: performance.now(), dur: (A.death && A.death.dur) || 2, hold: true };
       // stop background and play end-of-game music
       try {
-        if (sounds.current.background) { sounds.current.background.pause(); sounds.current.background.currentTime = 0; }
+        stopBackgroundMusic();
         if (sounds.current.endOfGame) { sounds.current.endOfGame.volume = musicVolRef.current; sounds.current.endOfGame.currentTime = 0; sounds.current.endOfGame.play(); }
       } catch (e) { }
     }
@@ -731,8 +749,6 @@ function App() {
       sounds.current.background = new Audio('sounds/background/background_sound.mp3');
       sounds.current.background.loop = true;
       sounds.current.background.volume = musicVolRef.current;
-      // try to autoplay muted until user interacts
-      sounds.current.background.play().catch(() => { });
       sounds.current.endOfGame = new Audio('sounds/endofgame/gameover.mp3');
       sounds.current.enemyDeath = new Audio('sounds/enemydeath/enemykilled.mp3');
       sounds.current.damageTaken = new Audio('sounds/damagetaken/damagetaken_soundeffect.mp3');
@@ -740,7 +756,12 @@ function App() {
       sounds.current.drinking = new Audio('sounds/drinkingayran/drinking_soundeffect.mp3');
       // set initial volumes
       if (sounds.current.background) sounds.current.background.volume = musicVolRef.current;
+      if (sounds.current.endOfGame) sounds.current.endOfGame.volume = musicVolRef.current;
+      try { window.__tellak_sounds = sounds.current; window.__tellak_musicLockedRef = musicLockedOffRef; } catch (e) { }
     } catch (e) { console.warn('Audio init failed', e); }
+    if (gameStarted) {
+      try { playBackgroundMusic(); } catch (e) { }
+    }
     if (arena.current.x === 0 && arena.current.y === 0) {
       arena.current.x = PLAYER_START_X;
       arena.current.y = PLAYER_START_Y;
@@ -749,13 +770,14 @@ function App() {
     let last = performance.now();
     function frame(now) {
       const dt = Math.min(0.05, (now - last) / 1000); last = now;
-      const c = cfg.current;
-      runArena(now, dt, c);
+      if (gameStarted) {
+        const c = cfg.current;
+        runArena(now, dt, c);
+        if (musicLockedOffRef.current) stopBackgroundMusic();
+      }
       raf = requestAnimationFrame(frame);
     }
     raf = requestAnimationFrame(frame);
-    // initial enemy spawn and HUD tick
-    try { spawnEnemyAt(); lastSpawnAt.current = performance.now(); } catch (e) { }
     const tickInterval = setInterval(() => setTick(t => t + 1), 400);
     window.addEventListener('resize', onResize);
     return () => {
@@ -764,11 +786,16 @@ function App() {
       window.removeEventListener('resize', onResize);
     };
     // eslint-disable-next-line
-  }, []);
+  }, [gameStarted]);
 
   useEffect(() => {
     syncAudioVolumes(musicVol, sfxVol);
   }, [musicVol, sfxVol]);
+
+  useEffect(() => {
+    if (!gameStarted) return;
+    try { spawnEnemyAt(); lastSpawnAt.current = performance.now(); } catch (e) { }
+  }, [gameStarted]);
 
   // ---------- arena controller ----------
   function runArena(now, dt, c) {
@@ -952,11 +979,11 @@ function App() {
     const a = arena.current;
     const ACT = { j: ['punch', false], k: ['kick', false], l: ['slap', false], b: ['drink', false], x: ['death', true] };
     function down(e) {
+      if (!gameStarted) return;
       if (a.dead) return;
       const key = e.key.toLowerCase();
-      if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(key)) {
+      if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
         e.preventDefault();
-        if (key === ' ') { if (isOffCooldown('punch')) trigger('punch', false); return; }
         // moving releases a held action (revive / stand up)
         if (a.action && a.action.hold) a.action = null;
         a.keys.add(key);
@@ -984,7 +1011,7 @@ function App() {
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); a.keys.clear(); a.action = null; };
-  }, []);
+  }, [gameStarted]);
 
   const nowPerf = performance.now();
   const remSec = (k) => Math.max(0, Math.ceil(((cooldownsRef.current[k] || 0) - nowPerf) / 1000));
@@ -993,7 +1020,7 @@ function App() {
   return (
     <React.Fragment>
       <div className="stagewrap">
-        <div className="stage" ref={stageRef}>
+        <div className={`stage${gameStarted ? '' : ' menuOpen'}`} ref={stageRef}>
           <div className="world" ref={worldRef}>
             <img className="map" src="sprites/map.png" alt="hamam map" draggable="false" />
             <div className="shadow" ref={shadowRef} />
@@ -1056,6 +1083,42 @@ function App() {
               </div>
             </div>
           </div>
+          {!gameStarted && (
+            <div className="mainMenu">
+              <div className="menuCard">
+                <div className="menuKicker">TELLAK - HAMAM BRAWLER</div>
+                <h1>Main Menu</h1>
+                <div className="menuControls">
+                  <div className="menuRow">
+                    <span>Music</span>
+                    <input type="range" min="0" max="1" step="0.01" value={musicVol} onInput={e => { const v = parseFloat(e.target.value); setMusicVol(v); syncAudioVolumes(v, sfxVolRef.current); }} onChange={e => { const v = parseFloat(e.target.value); setMusicVol(v); syncAudioVolumes(v, sfxVolRef.current); }} />
+                  </div>
+                  <div className="menuRow">
+                    <span>SFX</span>
+                    <input type="range" min="0" max="1" step="0.01" value={sfxVol} onInput={e => { const v = parseFloat(e.target.value); setSfxVol(v); syncAudioVolumes(musicVolRef.current, v); }} onChange={e => { const v = parseFloat(e.target.value); setSfxVol(v); syncAudioVolumes(musicVolRef.current, v); }} />
+                  </div>
+                </div>
+                <div className="menuHelp">
+                  <div><strong>WASD</strong> - Move</div>
+                  <div><strong>J</strong> - Punch</div>
+                  <div><strong>K</strong> - Kick</div>
+                  <div><strong>L</strong> - Ottoman Slap</div>
+                  <div><strong>B</strong> - Drink Sodalı Ayran</div>
+                </div>
+                <div className="menuDesc">Punch deals 1 damage with a 1s cooldown. Kick deals 2 damage with a 2s cooldown. Ottoman Slap deals 3 damage with a 10s cooldown, hits all enemies in range, and has a 25% chance to instantly kill. Drinking Sodalı Ayran fully restores HP and has a 30s cooldown.</div>
+                <button
+                  className="startButton"
+                  onPointerDown={e => e.stopPropagation()}
+                  onClick={e => {
+                    e.stopPropagation();
+                    setGameStarted(true);
+                  }}
+                >
+                  Start Game
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </React.Fragment>

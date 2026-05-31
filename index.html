@@ -62,6 +62,123 @@
       background: #000;
     }
 
+    .stage.menuOpen .world {
+      filter: blur(10px) brightness(0.6) saturate(0.85);
+    }
+
+    .stage.menuOpen .hud {
+      display: none;
+    }
+
+    .mainMenu {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 30;
+      padding: 24px;
+      background: radial-gradient(circle at center, rgba(9, 16, 15, 0.35), rgba(6, 10, 10, 0.75));
+    }
+
+    .menuCard {
+      width: min(92vw, 520px);
+      padding: 28px 28px 24px;
+      border-radius: 26px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(6, 12, 11, 0.62);
+      backdrop-filter: blur(18px) saturate(1.2);
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+      text-align: center;
+    }
+
+    .menuKicker {
+      font-size: 12px;
+      letter-spacing: 0.24em;
+      text-transform: uppercase;
+      color: #9ed0b4;
+      margin-bottom: 10px;
+    }
+
+    .menuCard h1 {
+      margin: 0;
+      font-size: clamp(36px, 6vw, 62px);
+      line-height: 0.95;
+      letter-spacing: 0.02em;
+      color: #f5f2df;
+    }
+
+    .menuControls {
+      display: grid;
+      gap: 12px;
+      margin: 18px 0 16px;
+      text-align: left;
+    }
+
+    .menuRow {
+      display: grid;
+      grid-template-columns: 68px 1fr;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+      color: rgba(236, 230, 214, 0.9);
+    }
+
+    .menuRow span {
+      color: #f0d28b;
+      font-weight: 700;
+    }
+
+    .menuRow input[type="range"] {
+      width: 100%;
+    }
+
+    .menuHelp {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px 16px;
+      margin: 18px 0 20px;
+      color: rgba(236, 230, 214, 0.86);
+      font-size: 13px;
+      text-align: left;
+    }
+
+    .menuHelp strong {
+      color: #fff4bf;
+    }
+
+    .menuDesc {
+      margin: 2px 0 16px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: rgba(236, 230, 214, 0.82);
+      text-align: center;
+    }
+
+    .startButton {
+      appearance: none;
+      border: 0;
+      width: 100%;
+      padding: 16px 18px;
+      border-radius: 16px;
+      background: linear-gradient(180deg, #f2c45c, #cc8f2b);
+      color: #1f1201;
+      font: inherit;
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      box-shadow: 0 12px 30px rgba(204, 143, 43, 0.28);
+    }
+
+    .startButton:hover {
+      filter: brightness(1.05);
+    }
+
+    .startButton:active {
+      transform: translateY(1px);
+    }
+
     .world {
       position: absolute;
       left: 0;
